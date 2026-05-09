@@ -1,0 +1,7 @@
+.app-root .ant-card {
+  box-shadow: 0 1px 2px 0 rgb(15 23 42 / 0.06);
+}
+
+.app-root .ant-table {
+  background: #fff;
+}
