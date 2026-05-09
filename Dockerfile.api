@@ -12,7 +12,7 @@ COPY pyproject.toml README.md ./
 COPY legal_calc ./legal_calc
 COPY main.py .
 
-RUN pip install ".[api]"
+RUN pip install -i https://pypi.tuna.tsinghua.edu.cn/simple ".[api]"
 
 EXPOSE 8000
 
