@@ -8,7 +8,7 @@
 2. **多媒体证据处理繁琐**：录音录像转写、聊天截图排序与事实归纳耗时长。
 3. **行政与时效节点易漏**：查封续封、开庭、举证期限等需登记与提前提醒。
 
-本文档描述 **MVP 范围**、**模块边界**、**确定性计算与 LLM 的职责划分**，供后续接口与实现对照。与端侧分期、搜索、知识库展示口径以《[UI_Design_Spec.md](./UI_Design_Spec.md)》**互为引用、同步更新**。
+本文档描述 **MVP 范围**、**模块边界**、**确定性计算与 LLM 的职责划分**，供后续接口与实现对照。与端侧分期、搜索、知识库展示口径以《[UI_Design_Spec.md](./UI_Design_Spec.md)》**互为引用、同步更新**。民间借贷与房屋租赁的**法条/公式级口径**以《[Legal_Logic_Implementation.md](./Legal_Logic_Implementation.md)》为准；三份 PRD 与 `docs/HANDOFF.md` 中涉及同一能力时**以 PRD 为产品口径源**，HANDOFF 侧重续作命令与路径索引。
 
 ---
 
@@ -24,7 +24,7 @@
 **金额类法律规则计算**
 
 - **业务流程与字段口径尚未与业务定稿**，需与律师/业务方讨论后再冻结（例如：入口是「纯手工填参」还是「合同抽取 + 人工确认」、是否多笔本金并行、出函格式等）。
-- **第一期允许**：先把 **页面壳子、列表/详情、计算任务占位数据结构** 做好，计算结果可用 **占位数据或简单表单** 演示交互；**确定性公式与规则版本** 在业务定稿后再实现，避免反复返工。
+- **第一期允许**：先把 **页面壳子、列表/详情、计算任务占位数据结构** 做好；计算结果在业务未定稿前可用 **占位数据或简单表单** 演示交互。**当前 workbench 原型例外**：已在 `legal_calc` 中落地 **民间借贷、房屋租赁** 的确定性计算与导出（规则版本见 `legal_calc/version.py`），并与 Web 原型联调；全案由、合同抽取、案件表等仍按迭代纳入（与下表及《[Legal_Logic_Implementation.md](./Legal_Logic_Implementation.md)》一致）。
 
 **首发形态**
 
@@ -34,7 +34,7 @@
 
 | 模块 | 第一期侧重 | 第二期及以后 |
 |------|------------|----------------|
-| 法律规则计算 | 框架与页面、任务/快照数据结构；**具体计算流程与规则待业务定稿后实现** | 单案多笔本金、固定规则/LPR 分段、可审计明细 JSON；全量案由模板等再议 |
+| 法律规则计算 | 框架与页面、任务/快照数据结构；**workbench 原型已交付**民间借贷 + 房屋租赁的确定性引擎、HTTP API、Excel 导出与 Web Tabs 形态（见 §2.4）；其余案由与全流程仍以业务定稿为准 | 单案多笔本金、更多案由模板、可审计明细与案件对象深度绑定；全量案由模板等再议 |
 | 辅助行政助手 | 文书上传与列表、OCR 可后接；时限与提醒可先简化 | 续封规则表版本化、多通道提醒、与业务规则深度绑定 |
 | 证据链处理中心 | 上传、列表、时间轴 UI、人工编辑 | ASR/复杂 OCR 与规模化成本优化 |
 | 知识库与 RAG | **不适用**（不部署、不接线上流量） | 所内知识库、条款/法规检索与问答 |
@@ -63,6 +63,20 @@
 - 任一案关键日期：**有来源字段**（OCR 文本或人工录入）与**推算规则版本**。
 - 证据时间轴：**每条节点可链接到原始文件与时间来源**（文件内时间戳或人工标注）。
 
+### 2.4 当前 workbench 仓库交付快照（与 UI、Legal 文档同步）
+
+以下描述 **本仓库已实现** 的边界，便于与 §2.1「第一期侧重」对照；**不**等同于全量产品定稿。
+
+| 层级 | 内容 |
+|------|------|
+| 计算引擎 | Python 包 `legal_calc`：`calculate_private_lending`、`calculate_rental`；全程 `Decimal`；规则与舍入见《[Legal_Logic_Implementation.md](./Legal_Logic_Implementation.md)》 |
+| HTTP | `main.py`（FastAPI）：`GET /health`；`POST /api/calculate`、`POST /api/export/excel`（民间借贷）；`POST /api/rental/calculate`、`POST /api/rental/export/excel`（租赁）；CORS 当前为 `*`（生产需收紧）；Excel 响应头使用 `filename*`（UTF-8）避免中文 `latin-1` 编码问题 |
+| Web 原型 | `web/`：Vite + React 18 + Ant Design 5；页面灰底 `#F8FAFC`、主色 `#1D4ED8`（与 UI 规范 Token 一致）；开发时 Vite 将 `/api`、`/health` 代理至后端 `8000`；**主入口为 Tabs**：「民间借贷」｜「房屋租赁」，字段与请求体分别对齐 `PrivateLendingRequest`、`RentalRequest`（详见《[UI_Design_Spec.md](./UI_Design_Spec.md)》§2.1.1、§6） |
+| 导出 | 工作簿含「计算明细」「审计信息」Sheet；表头顺序见代码 `REPORT_HEADERS`（与 Legal 文档 §3 一致） |
+| 容器 | `Dockerfile.api`、`Dockerfile.web`、`docker-compose.yml`、`docker/nginx.conf`；部署说明 `docs/DEPLOY_DOCKER.md` |
+
+**明确未纳入本快照**：案件 CRUD、鉴权、顶栏/列表搜索、知识库与 RAG（仍为第二期占位）。
+
 ---
 
 ## 3. 核心功能模块
@@ -71,7 +85,7 @@
 
 **当前状态（与业务对齐前）**：计算**端到端业务流程**（从哪一步录入、是否经过抽取、如何出函/导出）**待与业务方讨论定稿**。本节描述的是**定稿后**应坚持的技术原则，实现可分期上线。
 
-**目标**：在律师确认输入的前提下，对违约金、利息、滞纳金等做**可重复、可审计**的计算。
+**目标**：在律师确认输入的前提下，对违约金、利息、滞纳金等做**可重复、可审计**的计算。**当前仓库**已覆盖 **民间借贷利息** 与 **房屋租赁滞纳金 + 占用费**（见 `legal_calc/private_lending.py`、`legal_calc/rental/`），其它案由仍按产品迭代扩展。
 
 **职责划分**：
 
@@ -147,7 +161,7 @@
 | 层级 | 建议 | 说明 |
 |------|------|------|
 | 后端 | Python（FastAPI） | 便于科学计算、测试、与 OCR/ASR SDK 集成 |
-| 前端 Web | React + Ant Design Pro 或 Ant Design + 自建布局 | 与《[UI_Design_Spec.md](./UI_Design_Spec.md)》对齐；分期与搜索口径以两文档同步更新为准 |
+| 前端 Web | React + Ant Design Pro 或 Ant Design + 自建布局 | 与《[UI_Design_Spec.md](./UI_Design_Spec.md)》对齐；**原型阶段**可为 Vite + Ant Design 单页 + Tabs（见 §2.4）；分期与搜索口径以两文档同步更新为准 |
 | 移动端 | 微信小程序或 Uni-app | 拍照上传、订阅消息与金刚区入口 |
 | 关系库 | PostgreSQL | 案件、文书事件、计算快照、审计字段 |
 | 向量库 | **第二期再引入**（如 ChromaDB、PGVector） | 第一期架构预留即可，**不部署、不联调 RAG** |

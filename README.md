@@ -19,8 +19,10 @@ python -m uvicorn main:app --reload --host 127.0.0.1 --port 8000
 ```
 
 - `GET /health`：健康检查  
-- `POST /api/calculate`：请求体为 `PrivateLendingRequest`（JSON），返回计算结果  
-- `POST /api/export/excel`：同上请求体，返回 Excel 计算书（含审计页）
+- `POST /api/calculate`：请求体 `PrivateLendingRequest`（JSON）  
+- `POST /api/export/excel`：民间借贷 Excel（含审计页）  
+- `POST /api/rental/calculate`：请求体 `RentalRequest`  
+- `POST /api/rental/export/excel`：房屋租赁 Excel（含审计页）
 
 **前端**（`web/`，需 Node.js）：
 
@@ -40,5 +42,5 @@ UI：页面背景 `#F8FAFC`，Ant Design 主题主色 `#1D4ED8`。
 
 - `legal_calc.common`：日期分段、`LprProvider` 接口、`JsonFileLprProvider`（默认读 `legal_calc/data/lpr_1y_cny.json`）
 - `legal_calc.private_lending`：模块文件 `private_lending.py`，入口 `calculate_private_lending`
-- `legal_calc.rental`：租赁模型与占位引擎
+- `legal_calc.rental`：滞纳金（欠租区间∩租期、LPR 按日）+ 占用费；`export_rental_workbook`
 - `legal_calc.export`（`export.py`）：`write_report_workbook`，Sheet「计算明细」「审计信息」，openpyxl

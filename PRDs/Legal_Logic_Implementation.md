@@ -1,6 +1,6 @@
 # 法律计算器核心业务逻辑实现 (民间借贷 & 房屋租赁)
 
-代码包：`legal_calc`（`RULE_VERSION` 见 `legal_calc/version.py`）。**审计**：每次计算应保存规则版本号、输入快照、输出明细（业务确认 §12）。
+代码包：`legal_calc`（`RULE_VERSION` 见 `legal_calc/version.py`）。**审计**：每次计算应保存规则版本号、输入快照、输出明细（业务确认 §12）。**HTTP 与 Web 原型约定**见本文 **§4**（与《[Product_System_Architecture.md](./Product_System_Architecture.md)》§2.4、《[UI_Design_Spec.md](./UI_Design_Spec.md)》§2.1.1 对齐）。
 
 ---
 
@@ -44,7 +44,7 @@
 4. **还款**: `I_total += 当期利息(round 后之和)`；若 `还款 > I_total`，剩余冲本金；否则冲减应付息余额。本金归零后不计息。
 5. **输出**: `ReportLineItem` 明细；冲抵次序与行间舍入对齐。
 
-Python 入口：`legal_calc.private_lending.calculate_private_lending`。
+Python 入口：`legal_calc.private_lending.calculate_private_lending`。HTTP：`POST /api/calculate`、`POST /api/export/excel`（请求体 `PrivateLendingRequest`）。Excel：`legal_calc.export.export_private_lending_workbook`。
 
 ---
 
@@ -52,18 +52,19 @@ Python 入口：`legal_calc.private_lending.calculate_private_lending`。
 
 ### A. 租金滞纳金
 
-- **子任务**：按 **`arrears_period_start`～`arrears_period_end`（逐自然月）** 生成应交租日与滞纳金区间。
-- **应交租日**：`该月最后日历日 − rent_due_days_before_month_end`（0 表示当月最后一日）。
-- **起算点**：应交租日 **次日**，**按日**累计滞纳金。
-- **利率**：**一年期 LPR / 365 × 滞纳天数 × 当期月租金**（**无四倍**）；区间内按报价日再切分。
+- **子任务**：在 **欠租区间与租期（可选）的交集** 内，按 **逐自然月** 生成各期租金的滞纳金；交集为空则报错。
+- **应交租日**：`该月最后日历日 − rent_due_days_before_month_end`（0 表示当月最后一日）；若 N 过大导致落到上月，**钳制为该月 1 日**。
+- **起算点**：应交租日 **次日**；与欠租区间求交：**计息起点 = max(应交租次日, 欠租区间起点)**，**计息止点（不含）= 欠租区间末日 + 1 日**（即末日计入滞纳金）。
+- **利率**：**一年期 LPR / 365 × 滞纳天数 × 当期月租金**（**无四倍**）；区间内按 LPR 报价发布日再切分。
+- **舍入**：各分段先 **四舍五入到分** 再累加（与民间借贷导出口径一致）。
 
 ### B. 占用费
 
 - **起算**：**合同解除日次日**。
-- **止算**：有 **实际搬离日** 则至该日（含）；否则 **起诉日 + 30 日**（含）。
-- **标准**：`(月租金 / 30) × 2 × 自然日数`。
+- **止算**：有 **实际搬离日** 则至该日（含）；否则 **起诉日 + 30 日**（含）。若止日早于起算日，**不产生占用费行**（在 `messages` 中说明）。
+- **标准**：`(月租金 / 30) × 2 × 自然日数`（全程 `Decimal`）。
 
-Python 入口：`legal_calc.rental.calculate_rental`。
+Python 入口：`legal_calc.rental.calculate_rental`。Excel：`legal_calc.export.export_rental_workbook`。HTTP：`POST /api/rental/calculate`、`POST /api/rental/export/excel`。
 
 ---
 
@@ -82,3 +83,43 @@ Python 入口：`legal_calc.rental.calculate_rental`。
 **审计信息**：`RULE_VERSION`、`Input_Snapshot`（JSON）、计算所用 **LPR 原始 JSON**（默认读取包内 `lpr_1y_cny.json`）、以及 `assumptions_used`、`messages`、行合计。
 
 小计与总计可在导出层对「金额」列求和（与「先舍入再求和」一致）。
+
+---
+
+## 4. 前端与 HTTP 交付（与架构、UI 规范同步）
+
+本节描述 **workbench** 中与计算相关的联调约定；**产品级分期与布局愿景**仍以《[Product_System_Architecture.md](./Product_System_Architecture.md)》§2.4、《[UI_Design_Spec.md](./UI_Design_Spec.md)》§2.1.1 为准。若实现与本文不一致，**以代码为事实**，并回写 PRD。
+
+### 4.1 民间借贷
+
+| 项 | 约定 |
+|----|------|
+| 试算 | `POST /api/calculate`，JSON 与 `PrivateLendingRequest` 一致（金额字段为字符串小数、`convention` 如 `civil_365_simple`） |
+| 导出 | `POST /api/export/excel`，请求体同试算；响应为 XLSX |
+| 前端 Tab 文案 | 「民间借贷」 |
+| 下载文件名 | `民间借贷计算书.xlsx`（浏览器端 `download` 属性；服务端 `Content-Disposition` 另带 UTF-8 `filename*`） |
+
+**拒绝口径**：请求 `finance_360_compound` 等金融类 360/复利约定时，API 校验拒绝（与 §0 备忘 5 一致）。
+
+### 4.2 房屋租赁
+
+| 项 | 约定 |
+|----|------|
+| 试算 | `POST /api/rental/calculate`，JSON 与 `RentalRequest` 一致 |
+| 导出 | `POST /api/rental/export/excel` |
+| 前端 Tab 文案 | 「房屋租赁」 |
+| 下载文件名 | `房屋租赁计算书.xlsx` |
+
+**字段与校验（摘要）**：`monthly_rent`、`arrears_period_start` / `arrears_period_end`、`rent_due_days_before_month_end`（0–31）、`contract_termination_date` 必填；`actual_vacate_date` 与 `filing_date` 至少满足「有搬离日 **或** 有起诉日」（无搬离时占用费止日依赖起诉日+30，见 §0 备忘 8.x）。可选 `lease_start` / `lease_end` 与欠租区间求交后计滞纳金。
+
+**前端预校验**：无「实际搬离日」且无「起诉日」时，宜在调用 API 前提示用户，与后端 `RentalRequest` 一致。
+
+### 4.3 结果 JSON 与 UI
+
+试算响应为 `CalculationResult` 的 JSON：`ok`、`rule_version`、`assumptions_used`、`lines`（与 §3 列语义一致）、`messages`。前端以表格展示 `lines`，并展示 `rule_version` 与 `assumptions_used`；`messages` 在租赁等场景可能非空，建议用 `Alert` 展示。
+
+### 4.4 源码索引
+
+- 后端入口：`main.py`
+- 前端：`web/src/App.tsx`、`PrivateLendingPanel.tsx`、`RentalPanel.tsx`、`calcShared.tsx`
+- 联调：`web` 开发服务器将 `/api`、`/health` 代理至后端 **8000**（见 `web/vite.config.ts`）
