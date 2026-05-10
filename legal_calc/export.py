@@ -18,6 +18,7 @@ from pydantic import BaseModel
 
 from legal_calc.common.lpr_json_file import default_lpr_1y_json_path
 from legal_calc.private_lending import PrivateLendingRequest
+from legal_calc.rental.models import RentalRequest
 from legal_calc.report_models import CalculationResult, ReportLineItem
 
 # 文档列名（严格顺序）
@@ -202,6 +203,13 @@ def write_report_workbook(
 
 # 兼容旧名称
 write_workbook = write_report_workbook
+
+
+def export_rental_workbook(req: RentalRequest, result: CalculationResult) -> BytesIO:
+    """房屋租赁计算书（Excel + 审计页，含请求快照与 LPR JSON）。"""
+    out = write_report_workbook(result, None, input_snapshot=req)
+    assert isinstance(out, BytesIO)
+    return out
 
 
 def export_private_lending_workbook(req: PrivateLendingRequest, result: CalculationResult) -> BytesIO:

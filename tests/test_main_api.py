@@ -6,6 +6,7 @@ from decimal import Decimal
 from fastapi.testclient import TestClient
 
 from legal_calc.private_lending import PrivateLendingRequest, calculate_private_lending
+from legal_calc.rental import RentalRequest
 
 
 def test_health_and_calculate():
@@ -64,3 +65,25 @@ def test_calculate_matches_engine():
     c = TestClient(app)
     r = c.post("/api/calculate", json=req.model_dump(mode="json"))
     assert r.json() == direct.model_dump(mode="json")
+
+
+def test_rental_calculate_and_export():
+    from main import app
+
+    req = RentalRequest(
+        monthly_rent=Decimal("3000.00"),
+        arrears_period_start=date(2025, 1, 1),
+        arrears_period_end=date(2025, 1, 31),
+        rent_due_days_before_month_end=5,
+        contract_termination_date=date(2025, 3, 1),
+        actual_vacate_date=None,
+        filing_date=date(2025, 4, 1),
+    )
+    c = TestClient(app)
+    r = c.post("/api/rental/calculate", json=req.model_dump(mode="json"))
+    assert r.status_code == 200
+    assert r.json()["ok"] is True
+
+    r2 = c.post("/api/rental/export/excel", json=req.model_dump(mode="json"))
+    assert r2.status_code == 200
+    assert r2.content[:2] == b"PK"
