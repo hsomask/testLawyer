@@ -24,7 +24,7 @@ def split_segments(
     将闭区间 [period_start, period_end] 按分界日切成若干闭子区间。
 
     - boundary_starts_new_segment=True（默认）：分界日当天起适用「新段」，
-      上一段在分界日前一日结束（与文档「2020-08-20 起为 LPR 段」的常见实现一致，**仍以业务定稿为准**）。
+      上一段在分界日前一日结束（与文档「2020-08-20 起为新规则段」的常见实现一致，**仍以业务定稿为准**）。
     - boundary_starts_new_segment=False：分界日仍属旧段，新段从次日开始。
     """
     if period_end < period_start:

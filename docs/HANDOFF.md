@@ -41,7 +41,7 @@
 
 - `__pycache__` 等属本地生成，可忽略或清理
 - 前端 `npm audit` moderate 可按需处理
-- **改规则**：先改 `PRDs/Legal_Logic_Implementation.md`（含 **§0.1 业务定稿补充**），再改 `private_lending.py` / `rental/engine.py` 与 pytest，并同步检查 PRD §0/§1–§3 是否与代码一致
+- **改规则**：先改 `PRDs/Legal_Logic_Implementation.md`（§0 / §0.1 / §3.2），再改 `private_lending.py` / `rental/` 与 pytest；**租赁 API 字段** `rent_due_day_of_month`（已替代旧 `rent_due_days_before_month_end`）。
 
 ## 常用命令
 

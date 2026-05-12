@@ -1,7 +1,7 @@
 """
 民间借贷：`calculate_private_lending` 集成验证。
 
-含：跨 2020-08-20 分段 + 三次还款先息后本；无约定利率逾期按一年期 LPR。
+含：跨 2020-08-19/20 分界分段 + 三次还款先息后本；无约定利率逾期按一年期 LPR。
 全程断言使用 Decimal，避免 float。
 """
 
@@ -20,7 +20,7 @@ from legal_calc.private_lending import (
 
 def test_cross_policy_agreed_three_repayments() -> None:
     """
-    跨分界：借款在 2020-08-20 之前起息，还款与截止日在之后，
+    跨分界：借款在 2020-08-20 起息日之前起息，还款与截止日在之后，
     应有「旧段 24% 封顶」与「新段 LPR×4 封顶」下的 min(约定, 上限) 拆段。
     三次还款验证先息后本冲抵。
     """
@@ -39,8 +39,8 @@ def test_cross_policy_agreed_three_repayments() -> None:
     )
     out = calculate_private_lending(req)
     assert out.ok is True
-    assert any("2020-08-20 及以前" in ln.stage_description or "24%" in ln.stage_description for ln in out.lines)
-    assert any("2020-08-21 起" in ln.stage_description or "LPR×4" in ln.stage_description for ln in out.lines)
+    assert any("2020-08-19 及以前" in ln.stage_description or "24%" in ln.stage_description for ln in out.lines)
+    assert any("2020-08-20 起" in ln.stage_description or "LPR×4" in ln.stage_description for ln in out.lines)
 
     total = out.line_amount_sum()
     assert isinstance(total, Decimal)
@@ -108,6 +108,36 @@ def test_repayment_day_in_next_segment() -> None:
     assert any(
         ln.period_start <= date(2020, 10, 1) <= ln.period_end for ln in out.lines
     )
+
+
+def test_effective_end_max_filing_after_end_date() -> None:
+    """§0.1：计息末日 = max(截止计息日, 起诉日)。"""
+    req = PrivateLendingRequest(
+        principal=Decimal("100000"),
+        loan_date=date(2020, 6, 1),
+        repayments=[],
+        end_date=date(2021, 1, 31),
+        filing_date=date(2021, 6, 1),
+        agreed_annual_rate=Decimal("0.10"),
+    )
+    out = calculate_private_lending(req)
+    ends = [ln.period_end for ln in out.lines]
+    assert ends
+    assert max(ends) == date(2021, 6, 1)
+
+
+def test_effective_end_end_date_when_filing_earlier() -> None:
+    req = PrivateLendingRequest(
+        principal=Decimal("100000"),
+        loan_date=date(2020, 6, 1),
+        repayments=[],
+        end_date=date(2021, 6, 30),
+        filing_date=date(2021, 5, 10),
+        agreed_annual_rate=Decimal("0.10"),
+    )
+    out = calculate_private_lending(req)
+    ends = [ln.period_end for ln in out.lines]
+    assert max(ends) == date(2021, 6, 30)
 
 
 def test_no_float_in_accrual_path() -> None:

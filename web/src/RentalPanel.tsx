@@ -13,7 +13,7 @@ function buildRentalPayload(values: {
   monthly_rent: number;
   arrears_period_start: Dayjs;
   arrears_period_end: Dayjs;
-  rent_due_days_before_month_end: number;
+  rent_due_day_of_month: number;
   contract_termination_date: Dayjs;
   actual_vacate_date?: Dayjs | null;
   filing_date?: Dayjs | null;
@@ -24,7 +24,7 @@ function buildRentalPayload(values: {
     monthly_rent: moneyStr(values.monthly_rent),
     arrears_period_start: values.arrears_period_start.format("YYYY-MM-DD"),
     arrears_period_end: values.arrears_period_end.format("YYYY-MM-DD"),
-    rent_due_days_before_month_end: values.rent_due_days_before_month_end,
+    rent_due_day_of_month: values.rent_due_day_of_month,
     contract_termination_date: values.contract_termination_date.format("YYYY-MM-DD"),
   };
   if (values.actual_vacate_date)
@@ -123,7 +123,7 @@ export default function RentalPanel() {
             monthly_rent: 3000,
             arrears_period_start: dayjs("2025-01-01"),
             arrears_period_end: dayjs("2025-01-31"),
-            rent_due_days_before_month_end: 5,
+            rent_due_day_of_month: 26,
             contract_termination_date: dayjs("2025-03-01"),
             actual_vacate_date: null,
             filing_date: dayjs("2025-04-01"),
@@ -135,7 +135,7 @@ export default function RentalPanel() {
             type="info"
             showIcon
             style={{ marginBottom: 16 }}
-            message="滞纳金按欠租区间与租期交集、应交租次日与一年期 LPR；占用费为月租×2/30×自然日。无实际搬离日时须填起诉日。"
+            message="应交租日为每月「几日」（1–31）；滞纳金自交租日次日起算至起诉日（含）。欠租起止日仅作本金统计口径。月份范围：有租期起止则自租期起至 min(租期止,起诉日)；否则自欠租起点至起诉日。占用费规则不变，无搬离须填起诉日。"
           />
 
           <Row gutter={16}>
@@ -150,11 +150,11 @@ export default function RentalPanel() {
             </Col>
             <Col xs={24} sm={12} md={8}>
               <Form.Item
-                name="rent_due_days_before_month_end"
-                label="应交租日：距月末自然日数（0=月末当日，5=月末前第5日）"
+                name="rent_due_day_of_month"
+                label="应交租日：每月第几日（1–31，大于当月天数则按月末）"
                 rules={[{ required: true, message: "请输入" }]}
               >
-                <InputNumber min={0} max={31} precision={0} style={{ width: "100%" }} />
+                <InputNumber min={1} max={31} precision={0} style={{ width: "100%" }} />
               </Form.Item>
             </Col>
             <Col xs={24} sm={12} md={8}>
@@ -168,7 +168,7 @@ export default function RentalPanel() {
             </Col>
           </Row>
 
-          <Title level={5}>欠租统计区间（滞纳金计至区间末日）</Title>
+          <Title level={5}>欠租统计区间（仅本金统计口径）</Title>
           <Row gutter={16}>
             <Col xs={24} sm={12} md={8}>
               <Form.Item
