@@ -56,7 +56,7 @@
 3. **分段**: 在时间上切开 **分界日**，及（无约定时）**到期日次日**逾期起点；逾期且无约定的区间再按 **LPR 报价发布日**细分。
 4. **计息区间**: `[计息锚点, 还款日)` **半开**（**还款日当日不计入本段**）；下一段从 **还款日当日**起算。最后一程至 **`D_eff` 含当日**（实现为 **`[cursor, D_eff+1 日)`**）。
 5. **还款**: `I_total += 当期利息(round 后之和)`；若 `还款 > I_total`，剩余冲本金；否则冲减应付息余额。本金归零后不计息。
-6. **输出**: `ReportLineItem` 明细；冲抵次序与行间舍入对齐。
+6. **输出**: `ReportLineItem` 明细；冲抵次序与行间舍入对齐；**合计字段**见 §3.1（`CalculationResult`）。
 
 **注**：§0 备忘行 4.2「本金清零后不再计息」之止算日与 **`D_eff`**（§1.B.2）一致。
 
@@ -97,18 +97,21 @@ Python 入口：`legal_calc.rental.calculate_rental`。Excel：`legal_calc.expor
 - 起始日、截止日、天数
 - 金额
 
-**审计信息**：`RULE_VERSION`、`Input_Snapshot`（JSON）、计算所用 **LPR 原始 JSON**（默认读取包内 `lpr_1y_cny.json`）、以及 `assumptions_used`、`messages`、行合计。
+**审计信息**：`RULE_VERSION`、`Input_Snapshot`（JSON）、计算所用 **LPR 原始 JSON**（默认读取包内 `lpr_1y_cny.json`）、以及 `assumptions_used`、`messages`、行合计（`line_amount_sum`）。
 
-小计与总计可在导出层对「金额」列求和（与「先舍入再求和」一致）。
+**民间借贷 Excel 增补（与 §3.1 一致）**：「计算明细」Sheet 在明细行之后追加空行及三行合计（标签列 + 金额列）；「审计信息」Sheet 在 `line_amount_sum` 之后追加 `interest_subtotal`、`remaining_principal`、`total_principal_and_interest` 三键。**房屋租赁**导出**不**追加上述明细尾部行，审计页也**不**写入该三键（租赁试算 JSON 中对应字段为 `null`，见 §4.3）。
 
-### 3.1 民间借贷：利息小计与本息合计（已定稿，导出/UI 待迭代）
+小计与总计可在导出层对「金额」列求和（与「先舍入再求和」一致）；民间借贷「利息小计」以 **`fee_category == "利息"`** 的行之和为准，与 `line_amount_sum` 在仅有利息行时数值一致。
 
-与 §0.1 回复稿一致，**待**在导出与前端结果区增加：
+### 3.1 民间借贷：利息小计与本息合计（已定稿；试算 JSON / Excel / 前端已对齐）
 
-- **利息小计**：所有「利息」类 `ReportLineItem` 行之金额之和（民间借贷不含滞纳金扩展）。
-- **本息合计**：本金经还款冲抵后的余额口径 + 利息小计（展示时点与冲抵后本金一致，见业务回复稿）。
+与 §0.1 回复稿一致，口径如下；**实现**见 `legal_calc/report_models.py`（`CalculationResult` 字段）、`legal_calc/private_lending.py`（赋值）、`legal_calc/export.py`（仅 `export_private_lending_workbook` / `include_private_lending_totals` 路径）、`web/src/PrivateLendingPanel.tsx`。
 
-当前试算 JSON 仍为 `lines` 列表；合数字段可在 `CalculationResult` 扩展或仅在 Excel 层追加行，实现前以本节为口径源。
+- **利息小计**（JSON 字段 `interest_subtotal`）：所有 **`fee_category == "利息"`** 的 `ReportLineItem` 行之 `amount` 之和（民间借贷当前无滞纳金等扩展行；按行先舍入再累加）。
+- **冲抵后剩余本金**（`remaining_principal`）：还款冲抵与末段计息完成后之本金余额，**四舍五入到分**（与计息末日 **`D_eff`** 口径一致）。
+- **本息合计**（`total_principal_and_interest`）：**冲抵后剩余本金 + 利息小计**，再 **四舍五入到分**。
+
+**租赁**：同一 `CalculationResult` 形态下，上述三字段为 **`null`**，不适用本节语义。
 
 ### 3.2 实现状态（与 `RULE_VERSION` 同步）
 
@@ -116,7 +119,7 @@ Python 入口：`legal_calc.rental.calculate_rental`。Excel：`legal_calc.expor
 |------|------|------|
 | 民间借贷分界 `2020-08-19`/`2020-08-20` | **已实现** | `legal_calc/private_lending.py` |
 | 民间借贷计息末日 `D_eff=max(end_date,filing_date)` | **已实现** | 有 `filing_date` 时冲抵与末段均用 `D_eff` |
-| 民间借贷利息小计 / 本息合计 | **未实现** | 见 §3.1 |
+| 民间借贷利息小计 / 冲抵后本金 / 本息合计（JSON + Excel + 前端） | **已实现** | 见 §3.1、`CalculationResult` 三字段 |
 | 约定利率 0 与无约定分支的专项展示 | **部分**：仍走既有分支；可按 §0.1 第 14 条复查 |
 | 租赁 `rent_due_day_of_month` + 滞纳至起诉日 + 欠租不裁滞纳金 | **已实现** | `legal_calc/rental/` |
 | 水电 / 物业费滞纳金 | **未实现** | §0.1 第 18 条 |
@@ -154,7 +157,9 @@ Python 入口：`legal_calc.rental.calculate_rental`。Excel：`legal_calc.expor
 
 ### 4.3 结果 JSON 与 UI
 
-试算响应为 `CalculationResult` 的 JSON：`ok`、`rule_version`、`assumptions_used`、`lines`（与 §3 列语义一致）、`messages`。前端以表格展示 `lines`，并展示 `rule_version` 与 `assumptions_used`；`messages` 在租赁等场景可能非空，建议用 `Alert` 展示。
+试算响应为 `CalculationResult` 的 JSON：`ok`、`rule_version`、`assumptions_used`、`lines`（与 §3 列语义一致）、`messages`；**民间借贷**另含 **`interest_subtotal`**、**`remaining_principal`**、**`total_principal_and_interest`**（金额序列化与 `lines` 内金额字段一致，一般为字符串小数）。**房屋租赁**试算中该三项为 **`null`**（占位，无民间借贷本息语义）。
+
+前端以表格展示 `lines`，并展示 `rule_version` 与 `assumptions_used`；**民间借贷**在明细表上方以 `Descriptions`（或等价）展示上述三字段（与试算 JSON 对齐）。`messages` 在租赁等场景可能非空，建议用 `Alert` 展示。
 
 ### 4.4 源码索引
 

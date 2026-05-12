@@ -137,14 +137,22 @@ async def logged_http_exception_handler(request: Request, exc: HTTPException):
 
 
 def _log_result(tag: str, request: Request, result: CalculationResult) -> None:
+    extra = ""
+    if result.interest_subtotal is not None:
+        extra = (
+            f" interest_subtotal={result.interest_subtotal}"
+            f" remaining_principal={result.remaining_principal}"
+            f" total_pi={result.total_principal_and_interest}"
+        )
     _LOG.info(
-        "[%s] %s ok=%s rule_version=%s lines=%d amount_sum=%s",
+        "[%s] %s ok=%s rule_version=%s lines=%d amount_sum=%s%s",
         _rid(request),
         tag,
         result.ok,
         result.rule_version,
         len(result.lines),
         str(result.line_amount_sum()),
+        extra,
     )
     if result.messages:
         _LOG.info("[%s] %s messages=%s", _rid(request), tag, result.messages)

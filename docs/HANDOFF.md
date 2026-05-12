@@ -4,9 +4,55 @@
 
 - `PRDs/Product_System_Architecture.md`（含 **§2.4** 当前仓库交付快照）
 - `PRDs/UI_Design_Spec.md`（含 **§2.1.1** 金额计算原型 Tabs）
-- `PRDs/Legal_Logic_Implementation.md`（含 **§4** 前端与 HTTP 交付）
+- `PRDs/Legal_Logic_Implementation.md`（**§0 / §0.1** 业务备忘、**§2** 租赁公式、**§3.2** 实现状态表、**§4** HTTP/前端）
+
+## 最近迭代摘要（新开窗口续作）
+
+以下已合入 **`develop`**（推送前请以本地为准）；口径以 PRD 为准，**§3.2** 与代码同步。
+
+**民间借贷**
+
+- 利率分界：**2020-08-19（含）旧规则末日**，**2020-08-20** 起新规则（`private_lending`）。
+- 计息末日 **`D_eff`**：有 `filing_date` 时为 **`max(end_date, filing_date)`**（含当日）；冲抵、末段、还款晚于 `D_eff` 的 WARN 均按 `D_eff`。
+- `lpr_four_x_reference_date`：无起诉/文档月时回退 **计息末日 `D_eff` 所在月**（月末回溯）。
+- **利息小计 / 冲抵后剩余本金 / 本息合计**（PRD §3.1）：`CalculationResult` 三字段 **`interest_subtotal`、`remaining_principal`、`total_principal_and_interest`**；试算 JSON、民间借贷 Excel（明细末 + 审计键）、`PrivateLendingPanel` 结果区已对齐；租赁试算该三项为 **`null`**。
+
+**房屋租赁（API 有破坏性变更）**
+
+- 请求字段 **`rent_due_day_of_month`（1–31）`** 表示每月第几日交租（大于当月天数则钳为月末）；**已删除** `rent_due_days_before_month_end`。
+- 滞纳金：**自应交租日次日起至 `filing_date`（含）**；**欠租区间**仅作本金统计说明（写入 `assumptions_used`），**不裁**滞纳金。
+- 滞纳金所涉**自然月范围**：起点 `lease_start` 否则 `arrears_period_start`；终点 `min(lease_end, filing_date)` 否则 `filing_date`；与欠租区间脱钩。
+- 前端：`web/src/RentalPanel.tsx` 表单与文案已改；`npm run build` 可通过。
+
+**版本与测试**
+
+- `legal_calc/version.py`：`RULE_VERSION = "1.3.0-prd-2026-05-12"`（以文件为准）。
+- 全量测试当前：**35 passed**（`python -m pytest`）。
+
+**未完项**：见下文 **「待完成事项」**（与 `Legal_Logic_Implementation.md` **§3.2** 一致）。
+
+**其它**
+
+- `main.py`：排障日志（`LOG_LEVEL`、`X-Request-ID`、业务摘要）已在此前提交。
+- 根目录 `DEPLOY.md` 若存在多为本地稿，**未**默认纳入 git。
 
 把本页贴进新对话即可续开发（例如：HTTPS、权限、案件表等）。
+
+---
+
+## 待完成事项（PRD 已定稿或已排队 / 代码未做）
+
+新窗口续作时**优先对 PRD 与下表对齐**，避免与 §3.2 漂移。
+
+| 序号 | 事项 | 说明 / 卡住点 | 建议落点 |
+|------|------|-----------------|----------|
+| 1 | **水电 / 物业费**滞纳金 | 新需求（Legal §0.1 **第 18 条**）；与租金新规则同构，缺 **API 形态与请求体** | 新 `RentalRequest` 子结构或新路由；`rental/engine.py`；测试 |
+| 2 | **约定年化利率 = 0** | 业务要求与「无约定」及 `D_eff` 一致（§0.1 **第 14 条**）；代码仍走「有约定」分支时需 **显式分支或归并** | `legal_calc/private_lending.py` + `tests/test_private_lending.py` |
+| 3 | 租赁 **「该月已付清则不计滞纳」** | 当前 **无每月实付/欠付** 输入；引擎只能按月份范围 **逐月出表** | `RentalRequest` 增可选「月实付」或标记；`rental/engine.py` |
+| 4 | 界面「**20 号**」等展示优化 | Legal §0.1 **第 17 条**：**本期关闭**，待业务再给截图/文案 | `web/src/RentalPanel.tsx` 或后续 |
+| 5 | 产品级 backlog（与计算无关） | 从未在本仓库实现：HTTPS、鉴权、案件表、顶栏搜索等 | 见 `Product_System_Architecture.md`、**§2.4** 未纳入项 |
+
+**备注**：改规则仍须 **先改 PRD**（尤其 §0 / §0.1 / §3.2），再改代码与 pytest（见下文「已知注意点」）。
 
 ## 项目与仓库
 

@@ -10,6 +10,7 @@ from decimal import Decimal
 
 import pytest
 
+from legal_calc.money import quantize_money
 from legal_calc.private_lending import (
     InterestConvention,
     PrivateLendingRequest,
@@ -46,6 +47,14 @@ def test_cross_policy_agreed_three_repayments() -> None:
     assert isinstance(total, Decimal)
     assert total > Decimal("0")
     assert total == sum((ln.amount for ln in out.lines), Decimal("0.00"))
+
+    assert out.interest_subtotal == sum(
+        (ln.amount for ln in out.lines if ln.fee_category == "利息"), Decimal("0.00")
+    )
+    assert out.remaining_principal is not None
+    assert out.total_principal_and_interest == quantize_money(
+        out.remaining_principal + out.interest_subtotal
+    )
 
 
 def test_overdue_no_agreed_three_repayments() -> None:

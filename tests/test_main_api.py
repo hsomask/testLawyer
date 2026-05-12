@@ -29,6 +29,9 @@ def test_health_and_calculate():
     data = r.json()
     assert data["ok"] is True
     assert "rule_version" in data
+    assert data["interest_subtotal"] is not None
+    assert data["remaining_principal"] is not None
+    assert data["total_principal_and_interest"] is not None
 
 
 def test_export_excel_bytes():
@@ -82,7 +85,11 @@ def test_rental_calculate_and_export():
     c = TestClient(app)
     r = c.post("/api/rental/calculate", json=req.model_dump(mode="json"))
     assert r.status_code == 200
-    assert r.json()["ok"] is True
+    data = r.json()
+    assert data["ok"] is True
+    assert data.get("interest_subtotal") is None
+    assert data.get("remaining_principal") is None
+    assert data.get("total_principal_and_interest") is None
 
     r2 = c.post("/api/rental/export/excel", json=req.model_dump(mode="json"))
     assert r2.status_code == 200

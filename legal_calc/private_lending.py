@@ -292,10 +292,20 @@ def calculate_private_lending(
             lines=lines,
         )
 
+    remaining_principal = quantize_money(P)
+    interest_subtotal = sum(
+        (ln.amount for ln in lines if ln.fee_category == "利息"),
+        Decimal("0.00"),
+    )
+    total_principal_and_interest = quantize_money(remaining_principal + interest_subtotal)
+
     return CalculationResult(
         ok=True,
         rule_version=RULE_VERSION,
         assumptions_used=assumptions_used,
         lines=lines,
         messages=[],
+        interest_subtotal=interest_subtotal,
+        remaining_principal=remaining_principal,
+        total_principal_and_interest=total_principal_and_interest,
     )

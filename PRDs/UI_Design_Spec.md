@@ -57,7 +57,7 @@
 | 房屋租赁 | 滞纳金 + 占用费试算与导出 | `POST /api/rental/calculate`、`POST /api/rental/export/excel` | `房屋租赁计算书.xlsx` |
 
 - **表单与字段**：租赁 Tab 请求体与 `RentalRequest` 一致；**`rent_due_day_of_month`（1–31）** 为每月应交租日；**欠租起止**仅作本金统计说明；**滞纳金**计至起诉日（含），月份范围见 Legal §2.A 与 `assumptions_used`。若未填「实际搬离日」，须填「起诉日」（与 §0 备忘 8.x 及占用费一致）；前端宜预校验。
-- **结果区**：展示与后端 `CalculationResult` 一致的明细表（费用类目、基数、利率标准、起止日、天数、金额）及 `rule_version`、`assumptions_used`；租赁侧若有 `messages` 一并展示。
+- **结果区**：展示与后端 `CalculationResult` 一致的明细表（费用类目、基数、利率标准、起止日、天数、金额）及 `rule_version`、`assumptions_used`；**民间借贷**另展示 **`interest_subtotal`（利息小计）**、**`remaining_principal`（冲抵后剩余本金）**、**`total_principal_and_interest`（本息合计）**（与《[Legal_Logic_Implementation.md](./Legal_Logic_Implementation.md)》§3.1、§4.3 及试算 JSON 对齐）。租赁侧试算中该三项为 `null`，可不展示；若有 `messages` 一并展示。
 - **源码位置**（便于走查）：`web/src/App.tsx`（标题 + Tabs）、`web/src/PrivateLendingPanel.tsx`、`web/src/RentalPanel.tsx`、`web/src/calcShared.tsx`。
 
 ### 2.2 列表页
