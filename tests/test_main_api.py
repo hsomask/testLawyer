@@ -74,7 +74,7 @@ def test_rental_calculate_and_export():
         monthly_rent=Decimal("3000.00"),
         arrears_period_start=date(2025, 1, 1),
         arrears_period_end=date(2025, 1, 31),
-        rent_due_days_before_month_end=5,
+        rent_due_day_of_month=26,
         contract_termination_date=date(2025, 3, 1),
         actual_vacate_date=None,
         filing_date=date(2025, 4, 1),

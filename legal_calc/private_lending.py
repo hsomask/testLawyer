@@ -1,5 +1,5 @@
 """
-民间借贷计息：2020-08-20 分界 + 先息后本冲抵。
+民间借贷计息：2020-08-19/20 分界 + 先息后本冲抵。
 
 全部金额与利率运算使用 ``decimal.Decimal``，禁止在计息路径使用 float。
 """
@@ -18,9 +18,8 @@ from legal_calc.money import quantize_money
 from legal_calc.report_models import CalculationResult, ReportLineItem
 from legal_calc.version import RULE_VERSION
 
-# 2020-08-20 当日为旧规则段；2020-08-21 起为新规则段（与 PRD 一致）
-POLICY_OLD_THROUGH = date(2020, 8, 20)
-POLICY_NEW_START = date(2020, 8, 21)
+# 2020-08-19（含）为旧规则最后一日；2020-08-20 起为新规则段（与 PRD 一致）
+POLICY_NEW_START = date(2020, 8, 20)
 OLD_SEGMENT_CAP_ANNUAL = Decimal("0.24")
 
 
@@ -70,6 +69,13 @@ class PrivateLendingRequest(BaseModel):
         return self
 
 
+def effective_accrual_end_date(req: PrivateLendingRequest) -> date:
+    """计息末日（含）：有起诉日时取 max(截止计息日, 起诉日)，否则为截止计息日（§0.1 第 13、14 条）。"""
+    if req.filing_date is None:
+        return req.end_date
+    return max(req.end_date, req.filing_date)
+
+
 def merged_repayments(repayments: list[Repayment]) -> list[tuple[date, Decimal]]:
     buckets: dict[date, Decimal] = {}
     for r in repayments:
@@ -88,7 +94,7 @@ def lpr_four_x_reference_date(req: PrivateLendingRequest) -> date:
         return req.filing_date
     if req.lpr_document_month is not None:
         return req.lpr_document_month
-    return req.end_date
+    return effective_accrual_end_date(req)
 
 
 def four_x_cap_decimal(lpr: JsonFileLprProvider, ref: date) -> Decimal:
@@ -99,9 +105,9 @@ def four_x_cap_decimal(lpr: JsonFileLprProvider, ref: date) -> Decimal:
 def _chunk_policy_label(lo: date, hi_excl: date) -> str:
     last_day = hi_excl - timedelta(days=1)
     if last_day < POLICY_NEW_START:
-        return "2020-08-20 及以前段（24% 上限）"
+        return "2020-08-19 及以前段（24% 上限）"
     if lo >= POLICY_NEW_START:
-        return "2020-08-21 起段（LPR×4 上限）"
+        return "2020-08-20 起段（LPR×4 上限）"
     return "跨政策分段（不应出现）"
 
 
@@ -216,12 +222,16 @@ def calculate_private_lending(
     lpr: JsonFileLprProvider | None = None,
 ) -> CalculationResult:
     """
-    民间借贷：先息后本冲抵；2020-08-20 当日旧规则、08-21 起新规则并强制拆段。
+    民间借贷：先息后本冲抵；2020-08-19（含）旧规则末日、08-20 起新规则并强制拆段。
 
     参数与返回中的金额均为 Decimal；内部不因审计需要写入 float。
     """
     if req.end_date < req.loan_date:
         raise ValueError("end_date 不能早于 loan_date")
+
+    d_eff = effective_accrual_end_date(req)
+    if d_eff < req.loan_date:
+        raise ValueError("计息末日（含 max(截止计息日,起诉日)）不能早于 loan_date")
 
     lpr = lpr or JsonFileLprProvider()
     four_x_cap = four_x_cap_decimal(lpr, lpr_four_x_reference_date(req))
@@ -233,8 +243,8 @@ def calculate_private_lending(
 
     lines: list[ReportLineItem] = []
     assumptions_used: list[str] = [
-        "POLICY: 2020-08-20 当日旧规则；2020-08-21 起新规则；跨区间强制拆段",
-        "LPR×4：起诉月优先，否则文档月，否则 end_date 所在月（月末回溯）",
+        "POLICY: 2020-08-19（含）旧规则最后一日；2020-08-20 起新规则；跨区间强制拆段",
+        "计息末日：有起诉日则为 max(截止计息日, 起诉日)；LPR×4：起诉月优先，否则文档月，否则计息末日所在月（月末回溯）",
         "有约定：min(约定,司法上限)；无约定：期内零息，逾期一年期 LPR（无四倍）",
         "冲抵：先息后本；半开区间 [锚点,还款日)；本金归零后不再计息",
         "精度：Decimal；金额按分四舍五入，按行舍入后参与冲抵",
@@ -248,8 +258,10 @@ def calculate_private_lending(
         if P <= 0:
             assumptions_used.append("WARN: 本金已为 0 后仍有还款记录，已忽略")
             break
-        if repay_date > req.end_date:
-            assumptions_used.append(f"WARN: 还款 {repay_date} 晚于 end_date，本条未冲抵")
+        if repay_date > d_eff:
+            assumptions_used.append(
+                f"WARN: 还款 {repay_date} 晚于计息末日 {d_eff.isoformat()}，本条未冲抵"
+            )
             continue
 
         accrued_rounded = _accrue_lines_for_open_interval(
@@ -269,11 +281,11 @@ def calculate_private_lending(
             P = Decimal("0")
             break
 
-    if P > 0 and cursor <= req.end_date:
+    if P > 0 and cursor <= d_eff:
         _accrue_lines_for_open_interval(
             P,
             cursor,
-            req.end_date + timedelta(days=1),
+            d_eff + timedelta(days=1),
             req=req,
             lpr=lpr,
             four_x_cap=four_x_cap,

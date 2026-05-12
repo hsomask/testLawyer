@@ -9,30 +9,30 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 class RentalRequest(BaseModel):
     """
-    房屋租赁（PRD §2、§0 备忘）。
+    房屋租赁（PRD §2、§0 / §0.1）。
 
-    - **滞纳金**：欠租自然月内各期租金；应交租日 = 当月最后日历日 − ``rent_due_days_before_month_end``（0=月末当日）；
-      自应交租日**次日**起按日累计，基数=月租金，利率=一年期 LPR（**无四倍**）。
+    - **租金滞纳金**：各自然月应交租日 = 当月 **`rent_due_day_of_month` 日**（超过当月天数的钳为月末）；
+      自应交租日**次日**起至 **起诉日（含）** 按日计；基数=月租金；一年期 LPR（**无四倍**）。
+    - **欠租统计区间**：``arrears_period_start``～``arrears_period_end``（含）**仅用于欠租本金统计展示**，**不参与**滞纳金计息区间（§0.1 第 15–16 条）。
+    - **滞纳金所涉月份范围**：自 ``lease_start``（若填）否则 ``arrears_period_start`` 所在月起，至 ``min(lease_end, filing_date)``（若填 ``lease_end``）否则 ``filing_date`` 所在月止（均含）；与欠租区间脱钩。
     - **占用费**：解除日**次日**起至实际搬离日（含），或至起诉日+30（含）；日额 = 月租×2/30。
-    - **欠租统计区间**：``arrears_period_start``～``arrears_period_end``（含），与应交租日次日求交后计息。
-    - **租期裁剪**（可选）：若填 ``lease_start`` / ``lease_end``，滞纳金仅在与欠租区间**交集**内生成。
     """
 
     monthly_rent: Decimal = Field(gt=0, description="月租金")
-    arrears_period_start: date = Field(description="欠租统计区间起点（含）")
-    arrears_period_end: date = Field(description="欠租统计区间终点（含），滞纳金计至该日")
-    rent_due_days_before_month_end: int = Field(
-        ge=0,
+    arrears_period_start: date = Field(description="欠租统计区间起点（含），本金统计用")
+    arrears_period_end: date = Field(description="欠租统计区间终点（含），本金统计用")
+    rent_due_day_of_month: int = Field(
+        ge=1,
         le=31,
-        description="距该月末的自然日数；5 表示「月末前第 5 日」为应交租日",
+        description="每月应交租日为该月第几日（1=1 日）；大于当月天数时钳为当月最后一日",
     )
 
     contract_termination_date: date = Field(description="合同解除日")
     actual_vacate_date: date | None = Field(default=None, description="实际搬离日；无则占用费止日依赖起诉日+30")
-    filing_date: date | None = Field(default=None, description="无实际搬离时必填")
+    filing_date: date | None = Field(default=None, description="起诉日；滞纳金计至该日（含）；无实际搬离时亦必填以计占用费止日")
 
-    lease_start: date | None = Field(default=None, description="租期起，可选；与欠租区间求交后计滞纳金")
-    lease_end: date | None = Field(default=None, description="租期止，可选")
+    lease_start: date | None = Field(default=None, description="租期起；滞纳金月份范围优先用其作为起点")
+    lease_end: date | None = Field(default=None, description="租期止；与起诉日取早作为滞纳金月份范围终点")
 
     @field_validator("monthly_rent")
     @classmethod
@@ -50,16 +50,10 @@ class RentalRequest(BaseModel):
         return self
 
 
-def due_date_for_calendar_month(year: int, month: int, days_before_month_end: int) -> date:
+def due_date_by_day_of_month(year: int, month: int, day_of_month: int) -> date:
     """
-    应交租日：当月最后一日减去 ``days_before_month_end``（0=当月最后一日）。
-
-    若 N 过大导致落到上月，则钳制为当月 1 日（避免非法或跨月歧义）。
+    应交租日：该自然月的第 ``day_of_month`` 日；若大于当月天数则钳为当月最后一日。
     """
-    first = date(year, month, 1)
     _, last_d = calendar.monthrange(year, month)
-    anchor = date(year, month, last_d)
-    due = anchor - timedelta(days=days_before_month_end)
-    if due < first:
-        return first
-    return due
+    d = min(day_of_month, last_d)
+    return date(year, month, d)

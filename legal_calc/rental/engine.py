@@ -11,7 +11,7 @@ from decimal import Decimal
 
 from legal_calc.common.lpr_json_file import JsonFileLprProvider
 from legal_calc.money import quantize_money
-from legal_calc.rental.models import RentalRequest, due_date_for_calendar_month
+from legal_calc.rental.models import RentalRequest, due_date_by_day_of_month
 from legal_calc.report_models import CalculationResult, ReportLineItem
 from legal_calc.version import RULE_VERSION
 
@@ -37,16 +37,21 @@ def _lpr_cuts(lo: date, hi_excl: date, lpr: JsonFileLprProvider) -> list[date]:
     return sorted({lo, hi_excl, *lpr.publication_dates_in_open_interval(lo, hi_excl)})
 
 
-def _effective_arrears_window(req: RentalRequest) -> tuple[date, date]:
-    """欠租区间与租期（若填）求交。"""
-    start = req.arrears_period_start
-    end = req.arrears_period_end
-    if req.lease_start is not None:
-        start = max(start, req.lease_start)
+def _late_fee_month_range(req: RentalRequest) -> tuple[date, date]:
+    """
+    滞纳金所涉自然月的起、止日历日（含），用于枚举月份。
+    起点：租期起（若填）否则欠租统计起点；终点：min(租期止, 起诉日)（若填租期止）否则起诉日。
+    """
+    assert req.filing_date is not None
+    start = req.lease_start or req.arrears_period_start
     if req.lease_end is not None:
-        end = min(end, req.lease_end)
+        end = min(req.lease_end, req.filing_date)
+    else:
+        end = req.filing_date
     if start > end:
-        raise ValueError("欠租区间与租期（lease_start/lease_end）无交集，无法计算滞纳金")
+        raise ValueError(
+            "滞纳金：租期起（或欠租统计起点）晚于 min(租期止, 起诉日)，请检查租期与起诉日"
+        )
     return start, end
 
 
@@ -54,19 +59,18 @@ def _late_fee_segment_for_month(
     y: int,
     m: int,
     req: RentalRequest,
-    arrears_start: date,
-    arrears_hi_excl: date,
+    late_hi_excl: date,
     lpr: JsonFileLprProvider,
     lines: list[ReportLineItem],
 ) -> Decimal:
     """
-    该月应付租的滞纳金：起算 max(应交租次日, arrears_start)，止算 arrears_hi_excl（半开）。
+    该月应付租的滞纳金：起算应交租日次日；止算 late_hi_excl（半开，即含起诉日）。
     返回本函数产生的**已舍入行金额之和**。
     """
-    due = due_date_for_calendar_month(y, m, req.rent_due_days_before_month_end)
+    due = due_date_by_day_of_month(y, m, req.rent_due_day_of_month)
     accrual_start = due + timedelta(days=1)
-    seg_lo = max(accrual_start, arrears_start)
-    seg_hi_excl = arrears_hi_excl
+    seg_lo = accrual_start
+    seg_hi_excl = late_hi_excl
     if seg_lo >= seg_hi_excl:
         return Decimal("0")
 
@@ -151,24 +155,28 @@ def calculate_rental(
     lines: list[ReportLineItem] = []
     messages: list[str] = []
 
-    arrears_start, arrears_end = _effective_arrears_window(req)
-    arrears_hi_excl = arrears_end + timedelta(days=1)
+    assert req.filing_date is not None
+    range_lo, range_hi = _late_fee_month_range(req)
+    late_hi_excl = req.filing_date + timedelta(days=1)
 
     assumptions_used = [
-        "滞纳金：应交租日次日；计息与欠租区间求交 max(起算日, 欠租起点)；止日=欠租区间末日（含）",
+        "滞纳金：应交租日为每月 rent_due_day_of_month 日（超当月天数则月末）；次日起至起诉日（含）",
+        "欠租统计区间仅作本金统计口径，不裁滞纳金；月份范围见 messages",
         "基数=月租金；利率=公布一年期 LPR÷365×自然日（无四倍）",
         "占用费：(月租金/30)×2×自然日；解除次日起；有搬离至搬离日（含），否则起诉日+30（含）",
         "金额：Decimal；按行四舍五入到分",
     ]
-    if req.lease_start is not None or req.lease_end is not None:
-        assumptions_used.append(
-            f"租期裁剪：effective 欠租窗口 {arrears_start.isoformat()}～{arrears_end.isoformat()}"
-        )
+    assumptions_used.append(
+        f"欠租本金统计区间 {req.arrears_period_start.isoformat()}～{req.arrears_period_end.isoformat()}（含）"
+    )
+    assumptions_used.append(
+        f"滞纳金月份范围 {range_lo.isoformat()}～{range_hi.isoformat()}（含端月）"
+    )
 
-    months = _months_in_range_inclusive(arrears_start, arrears_end)
+    months = _months_in_range_inclusive(range_lo, range_hi)
     late_total = Decimal("0")
     for y, m in months:
-        late_total += _late_fee_segment_for_month(y, m, req, arrears_start, arrears_hi_excl, lpr, lines)
+        late_total += _late_fee_segment_for_month(y, m, req, late_hi_excl, lpr, lines)
 
     occ_total = _occupancy_lines(req, lines, messages)
 

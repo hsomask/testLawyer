@@ -56,7 +56,7 @@
 | 民间借贷 | 利息分段试算与导出 | `POST /api/calculate`、`POST /api/export/excel` | `民间借贷计算书.xlsx` |
 | 房屋租赁 | 滞纳金 + 占用费试算与导出 | `POST /api/rental/calculate`、`POST /api/rental/export/excel` | `房屋租赁计算书.xlsx` |
 
-- **表单校验**：租赁场景下，若未填「实际搬离日」，则须填「起诉日」（与 `RentalRequest` 及 Legal 文档 §0 备忘 8.x 一致）；前端宜在提交前提示，与后端校验口径一致。
+- **表单与字段**：租赁 Tab 请求体与 `RentalRequest` 一致；**`rent_due_day_of_month`（1–31）** 为每月应交租日；**欠租起止**仅作本金统计说明；**滞纳金**计至起诉日（含），月份范围见 Legal §2.A 与 `assumptions_used`。若未填「实际搬离日」，须填「起诉日」（与 §0 备忘 8.x 及占用费一致）；前端宜预校验。
 - **结果区**：展示与后端 `CalculationResult` 一致的明细表（费用类目、基数、利率标准、起止日、天数、金额）及 `rule_version`、`assumptions_used`；租赁侧若有 `messages` 一并展示。
 - **源码位置**（便于走查）：`web/src/App.tsx`（标题 + Tabs）、`web/src/PrivateLendingPanel.tsx`、`web/src/RentalPanel.tsx`、`web/src/calcShared.tsx`。
 
@@ -161,4 +161,4 @@
 
 - 设计稿与本文 Token 对齐；走查长文案、无数据、加载失败状态。
 - 与架构文档同步变更分期时，优先更新 **§2.1.1、§2.5、§6、§6.1** 与架构 **§2.0、§2.3、§2.4**。
-- workbench 前端文件或 API 变更时，同步检查《[Legal_Logic_Implementation.md](./Legal_Logic_Implementation.md)》§4（字段与 HTTP 与实现一致）。
+- workbench 前端字段或租赁 JSON 变更时，同步《[Legal_Logic_Implementation.md](./Legal_Logic_Implementation.md)》**§2.A、§4.2、§3.2**。

@@ -69,7 +69,7 @@
 
 | 层级 | 内容 |
 |------|------|
-| 计算引擎 | Python 包 `legal_calc`：`calculate_private_lending`、`calculate_rental`；全程 `Decimal`；规则与舍入见《[Legal_Logic_Implementation.md](./Legal_Logic_Implementation.md)》 |
+| 计算引擎 | Python 包 `legal_calc`：`calculate_private_lending`、`calculate_rental`；全程 `Decimal`；**规则与已实现/待实现条目**见《[Legal_Logic_Implementation.md](./Legal_Logic_Implementation.md)》**§2、§3.2** |
 | HTTP | `main.py`（FastAPI）：`GET /health`；`POST /api/calculate`、`POST /api/export/excel`（民间借贷）；`POST /api/rental/calculate`、`POST /api/rental/export/excel`（租赁）；CORS 当前为 `*`（生产需收紧）；Excel 响应头使用 `filename*`（UTF-8）避免中文 `latin-1` 编码问题；排障日志：`LOG_LEVEL`（默认 `INFO`）、响应头 `X-Request-ID`，详见《[Legal_Logic_Implementation.md](./Legal_Logic_Implementation.md)》§4.5 |
 | Web 原型 | `web/`：Vite + React 18 + Ant Design 5；页面灰底 `#F8FAFC`、主色 `#1D4ED8`（与 UI 规范 Token 一致）；开发时 Vite 将 `/api`、`/health` 代理至后端 `8000`；**主入口为 Tabs**：「民间借贷」｜「房屋租赁」，字段与请求体分别对齐 `PrivateLendingRequest`、`RentalRequest`（详见《[UI_Design_Spec.md](./UI_Design_Spec.md)》§2.1.1、§6） |
 | 导出 | 工作簿含「计算明细」「审计信息」Sheet；表头顺序见代码 `REPORT_HEADERS`（与 Legal 文档 §3 一致） |
