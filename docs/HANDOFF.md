@@ -26,6 +26,12 @@
 | Web | `web/src/App.tsx`、`PrivateLendingPanel.tsx`、`RentalPanel.tsx`、`calcShared.tsx` |
 | Docker | `Dockerfile.api`、`Dockerfile.web`、`docker-compose.yml`、`docker/nginx.conf`；`docs/DEPLOY_DOCKER.md` |
 
+## API 排障日志（`main.py`）
+
+- 环境变量 `LOG_LEVEL`：默认 `INFO`；`DEBUG` 时计算类接口会打印**已通过校验**的请求体 JSON（含敏感金额，仅建议本地排障）。
+- 控制台同一请求用方括号中的 **request id** 串起来看；响应头 `X-Request-ID` 与此一致。
+- 每条非 `/health` 请求会打：进入行、结束行（含状态码与耗时 ms）、成功时 `rule_version` / 行数 / 金额合计、导出时 `xlsx_bytes`；`400/422` 会打 `ValueError` 或 Pydantic 校验详情；已降低 `uvicorn.access` 噪音，避免与上述重复。
+
 ## 测试
 
 - `tests/test_private_lending.py`、`tests/test_rental.py`、`tests/test_main_api.py`、`tests/test_excel_export.py` 等
