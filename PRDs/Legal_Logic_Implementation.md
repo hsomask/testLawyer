@@ -123,3 +123,8 @@ Python 入口：`legal_calc.rental.calculate_rental`。Excel：`legal_calc.expor
 - 后端入口：`main.py`
 - 前端：`web/src/App.tsx`、`PrivateLendingPanel.tsx`、`RentalPanel.tsx`、`calcShared.tsx`
 - 联调：`web` 开发服务器将 `/api`、`/health` 代理至后端 **8000**（见 `web/vite.config.ts`）
+
+### 4.5 服务端日志（排障）
+
+- 环境变量 `LOG_LEVEL`（默认 `INFO`）；`DEBUG` 时在一次请求通过 Pydantic 校验后，可将请求体 JSON 记入日志（含金额字段，**仅供本地/受控环境排障**）。
+- 响应头 `X-Request-ID` 与控制台中带 `[id]` 的访问行、业务摘要行对应；`/health` 在 `INFO` 下不刷屏（详见 `main.py` 模块说明）。
