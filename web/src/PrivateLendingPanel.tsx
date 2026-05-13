@@ -5,6 +5,7 @@ import {
   Card,
   Col,
   DatePicker,
+  Descriptions,
   Form,
   InputNumber,
   Row,
@@ -279,6 +280,19 @@ export default function PrivateLendingPanel() {
                   </ul>
                 }
               />
+            ) : null}
+            {result.interest_subtotal != null ? (
+              <Descriptions size="small" bordered column={{ xs: 1, sm: 3 }}>
+                <Descriptions.Item label="利息小计">
+                  <Text strong>{result.interest_subtotal}</Text>
+                </Descriptions.Item>
+                <Descriptions.Item label="冲抵后剩余本金">
+                  <Text strong>{result.remaining_principal}</Text>
+                </Descriptions.Item>
+                <Descriptions.Item label="本息合计">
+                  <Text strong>{result.total_principal_and_interest}</Text>
+                </Descriptions.Item>
+              </Descriptions>
             ) : null}
             <Table columns={lineColumns} dataSource={tableData} scroll={{ x: 900 }} pagination={false} size="small" />
           </Space>

@@ -29,6 +29,19 @@ class CalculationResult(BaseModel):
     assumptions_used: list[str] = Field(default_factory=list)
     lines: list[ReportLineItem] = Field(default_factory=list)
     messages: list[str] = Field(default_factory=list)
+    # 民间借贷 PRD §3.1；租赁等场景保持为 None
+    interest_subtotal: Decimal | None = Field(
+        default=None,
+        description="利息类 ReportLineItem 金额之和（按行舍入后再加总）",
+    )
+    remaining_principal: Decimal | None = Field(
+        default=None,
+        description="冲抵后剩余本金（与计息末日时点一致）",
+    )
+    total_principal_and_interest: Decimal | None = Field(
+        default=None,
+        description="本息合计：冲抵后剩余本金 + 利息小计",
+    )
 
     def line_amount_sum(self) -> Decimal:
         return sum((ln.amount for ln in self.lines), Decimal("0.00"))

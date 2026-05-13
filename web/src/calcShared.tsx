@@ -22,6 +22,10 @@ export type ApiResult = {
   assumptions_used: string[];
   lines: ApiLine[];
   messages: string[];
+  /** 民间借贷 PRD §3.1；租赁试算为 null */
+  interest_subtotal?: string | null;
+  remaining_principal?: string | null;
+  total_principal_and_interest?: string | null;
 };
 
 export function formatApiError(data: unknown): string {

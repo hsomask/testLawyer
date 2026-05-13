@@ -7,7 +7,6 @@ Excel 导出：计算明细 + 审计信息（openpyxl）。
 from __future__ import annotations
 
 import json
-from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -131,29 +130,70 @@ def _fill_detail(ws, lines: list[ReportLineItem]) -> None:
         )
 
 
+def _append_private_lending_detail_summary(ws, result: CalculationResult) -> None:
+    """PRD §3.1：明细表底部追加利息小计、冲抵后本金、本息合计。"""
+    if result.interest_subtotal is None:
+        return
+    ws.append([])
+    ws.append(
+        [
+            "【利息小计】",
+            "",
+            "",
+            "",
+            "",
+            "",
+            result.interest_subtotal,
+        ]
+    )
+    ws.append(
+        [
+            "【冲抵后剩余本金】",
+            "",
+            "",
+            "",
+            "",
+            "",
+            result.remaining_principal,
+        ]
+    )
+    ws.append(
+        [
+            "【本息合计】",
+            "",
+            "",
+            "",
+            "",
+            "",
+            result.total_principal_and_interest,
+        ]
+    )
+
+
 def _fill_audit(
     ws,
     *,
-    rule_version: str,
+    result: CalculationResult,
     input_snapshot: BaseModel | dict[str, Any] | str | None,
     lpr_raw_snapshot: str | None,
     lpr_file_path: Path | None,
-    assumptions_used: list[str],
-    messages: list[str],
-    line_sum: Decimal,
 ) -> None:
     snap = _input_snapshot_to_str(input_snapshot)
     src, lpr_text = _resolve_lpr_raw(lpr_raw_snapshot, lpr_file_path)
 
     ws.append(["字段", "内容"])
-    ws.append(["RULE_VERSION", rule_version])
+    ws.append(["RULE_VERSION", result.rule_version])
     ws.append(["Input_Snapshot (JSON)", snap or "（未提供）"])
     ws.append(["LPR_Data_Source", src])
     ws.append(["LPR_Raw_JSON", lpr_text])
     ws.append([])
-    ws.append(["assumptions_used", "\n".join(assumptions_used)])
-    ws.append(["messages", "\n".join(messages)])
-    ws.append(["line_amount_sum", str(line_sum)])
+    ws.append(["assumptions_used", "\n".join(result.assumptions_used)])
+    ws.append(["messages", "\n".join(result.messages)])
+    ws.append(["line_amount_sum", str(result.line_amount_sum())])
+    if result.interest_subtotal is not None:
+        ws.append(["interest_subtotal", str(result.interest_subtotal)])
+        ws.append(["remaining_principal", str(result.remaining_principal)])
+        ws.append(["total_principal_and_interest", str(result.total_principal_and_interest)])
 
 
 def write_report_workbook(
@@ -163,6 +203,7 @@ def write_report_workbook(
     input_snapshot: BaseModel | dict[str, Any] | str | None = None,
     lpr_raw_snapshot: str | None = None,
     lpr_file_path: Path | None = None,
+    include_private_lending_totals: bool = False,
 ) -> Path | BytesIO:
     """
     生成 xlsx：Sheet「计算明细」+「审计信息」。
@@ -177,18 +218,17 @@ def write_report_workbook(
     assert ws_detail is not None
     ws_detail.title = "计算明细"
     _fill_detail(ws_detail, result.lines)
+    if include_private_lending_totals:
+        _append_private_lending_detail_summary(ws_detail, result)
     _style_detail_sheet(ws_detail)
 
     ws_audit = wb.create_sheet("审计信息", 1)
     _fill_audit(
         ws_audit,
-        rule_version=result.rule_version,
+        result=result,
         input_snapshot=input_snapshot,
         lpr_raw_snapshot=lpr_raw_snapshot,
         lpr_file_path=lpr_file_path,
-        assumptions_used=result.assumptions_used,
-        messages=result.messages,
-        line_sum=result.line_amount_sum(),
     )
     _style_audit_sheet(ws_audit)
 
@@ -207,7 +247,7 @@ write_workbook = write_report_workbook
 
 def export_rental_workbook(req: RentalRequest, result: CalculationResult) -> BytesIO:
     """房屋租赁计算书（Excel + 审计页，含请求快照与 LPR JSON）。"""
-    out = write_report_workbook(result, None, input_snapshot=req)
+    out = write_report_workbook(result, None, input_snapshot=req, include_private_lending_totals=False)
     assert isinstance(out, BytesIO)
     return out
 
@@ -218,6 +258,6 @@ def export_private_lending_workbook(req: PrivateLendingRequest, result: Calculat
 
     审计页自动附带请求快照与默认 LPR JSON。
     """
-    out = write_report_workbook(result, None, input_snapshot=req)
+    out = write_report_workbook(result, None, input_snapshot=req, include_private_lending_totals=True)
     assert isinstance(out, BytesIO)
     return out
