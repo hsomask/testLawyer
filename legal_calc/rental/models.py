@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import calendar
-from datetime import date, timedelta
+from datetime import date
 from decimal import Decimal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -16,6 +16,7 @@ class RentalRequest(BaseModel):
     - **欠租统计区间**：``arrears_period_start``～``arrears_period_end``（含）**仅用于欠租本金统计展示**，**不参与**滞纳金计息区间（§0.1 第 15–16 条）。
     - **滞纳金所涉月份范围**：自 ``lease_start``（若填）否则 ``arrears_period_start`` 所在月起，至 ``min(lease_end, filing_date)``（若填 ``lease_end``）否则 ``filing_date`` 所在月止（均含）；与欠租区间脱钩。
     - **占用费**：解除日**次日**起至实际搬离日（含），或至起诉日+30（含）；日额 = 月租×2/30。
+    - **物业费 / 水电费滞纳金（Demo）**：可选 ``monthly_property_management_fee``、``monthly_utility_fee``；与租金**同次**计算，规则见 PRD §2.C。
     """
 
     monthly_rent: Decimal = Field(gt=0, description="月租金")
@@ -34,9 +35,34 @@ class RentalRequest(BaseModel):
     lease_start: date | None = Field(default=None, description="租期起；滞纳金月份范围优先用其作为起点")
     lease_end: date | None = Field(default=None, description="租期止；与起诉日取早作为滞纳金月份范围终点")
 
+    monthly_property_management_fee: Decimal | None = Field(
+        default=None,
+        ge=0,
+        description="物业费（月）。Demo：与租金滞纳金同构、同应交日 rent_due_day_of_month；未填或 0 不计",
+    )
+    monthly_utility_fee: Decimal | None = Field(
+        default=None,
+        ge=0,
+        description="水电等能耗费（月，合并示意）。Demo 规则同物业费；未填或 0 不计",
+    )
+
     @field_validator("monthly_rent")
     @classmethod
     def q_rent(cls, v: Decimal) -> Decimal:
+        return v.quantize(Decimal("0.01"))
+
+    @field_validator("monthly_property_management_fee", "monthly_utility_fee", mode="before")
+    @classmethod
+    def empty_str_to_none(cls, v: object) -> object:
+        if v == "" or v is None:
+            return None
+        return v
+
+    @field_validator("monthly_property_management_fee", "monthly_utility_fee")
+    @classmethod
+    def q_optional_monthly(cls, v: Decimal | None) -> Decimal | None:
+        if v is None:
+            return None
         return v.quantize(Decimal("0.01"))
 
     @model_validator(mode="after")

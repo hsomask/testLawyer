@@ -22,12 +22,13 @@
 - 请求字段 **`rent_due_day_of_month`（1–31）`** 表示每月第几日交租（大于当月天数则钳为月末）；**已删除** `rent_due_days_before_month_end`。
 - 滞纳金：**自应交租日次日起至 `filing_date`（含）**；**欠租区间**仅作本金统计说明（写入 `assumptions_used`），**不裁**滞纳金。
 - 滞纳金所涉**自然月范围**：起点 `lease_start` 否则 `arrears_period_start`；终点 `min(lease_end, filing_date)` 否则 `filing_date`；与欠租区间脱钩。
-- 前端：`web/src/RentalPanel.tsx` 表单与文案已改；`npm run build` 可通过。
+- **物业费 / 水电费滞纳金（Demo）**：可选 `monthly_property_management_fee`、`monthly_utility_fee`；与租金**同一次** `POST /api/rental/calculate`；规则见 Legal **§2.C**（与 `rent_due_day_of_month` 同序位；定稿前可改）。
+- 前端：`web/src/RentalPanel.tsx`（含 Demo 说明 Alert 与可选字段）；`npm run build` 可通过。
 
 **版本与测试**
 
-- `legal_calc/version.py`：`RULE_VERSION = "1.3.0-prd-2026-05-12"`（以文件为准）。
-- 全量测试当前：**35 passed**（`python -m pytest`）。
+- `legal_calc/version.py`：`RULE_VERSION = "1.4.0-prd-2026-05-12"`（以文件为准）。
+- 全量测试当前：**36 passed**（`python -m pytest`）。
 
 **未完项**：见下文 **「待完成事项」**（与 `Legal_Logic_Implementation.md` **§3.2** 一致）。
 
@@ -40,13 +41,13 @@
 
 ---
 
-## 待完成事项（PRD 已定稿或已排队 / 代码未做）
+## 待完成事项（PRD 已定稿或已排队 / 与 §3.2 未完对齐）
 
 新窗口续作时**优先对 PRD 与下表对齐**，避免与 §3.2 漂移。
 
 | 序号 | 事项 | 说明 / 卡住点 | 建议落点 |
 |------|------|-----------------|----------|
-| 1 | **水电 / 物业费**滞纳金 | 新需求（Legal §0.1 **第 18 条**）；与租金新规则同构，缺 **API 形态与请求体** | 新 `RentalRequest` 子结构或新路由；`rental/engine.py`；测试 |
+| 1 | 水电 / 物业费滞纳金 **定稿与扩展** | **Demo** 已实现（Legal **§2.C**：可选月费、与租金同算、同 LPR 规则）；待业务确认：独立应付日、抄表周期、分项/拆 API、与主文表述 | 回写 PRD §2.C 后迭代 `RentalRequest` / `rental/engine.py` |
 | 2 | **约定年化利率 = 0** | 业务要求与「无约定」及 `D_eff` 一致（§0.1 **第 14 条**）；代码仍走「有约定」分支时需 **显式分支或归并** | `legal_calc/private_lending.py` + `tests/test_private_lending.py` |
 | 3 | 租赁 **「该月已付清则不计滞纳」** | 当前 **无每月实付/欠付** 输入；引擎只能按月份范围 **逐月出表** | `RentalRequest` 增可选「月实付」或标记；`rental/engine.py` |
 | 4 | 界面「**20 号**」等展示优化 | Legal §0.1 **第 17 条**：**本期关闭**，待业务再给截图/文案 | `web/src/RentalPanel.tsx` 或后续 |
