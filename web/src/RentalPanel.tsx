@@ -11,6 +11,8 @@ function moneyStr(n: number): string {
 
 function buildRentalPayload(values: {
   monthly_rent: number;
+  monthly_property_management_fee?: number | null;
+  monthly_utility_fee?: number | null;
   arrears_period_start: Dayjs;
   arrears_period_end: Dayjs;
   rent_due_day_of_month: number;
@@ -32,6 +34,12 @@ function buildRentalPayload(values: {
   if (values.filing_date) body.filing_date = values.filing_date.format("YYYY-MM-DD");
   if (values.lease_start) body.lease_start = values.lease_start.format("YYYY-MM-DD");
   if (values.lease_end) body.lease_end = values.lease_end.format("YYYY-MM-DD");
+  if (values.monthly_property_management_fee != null && values.monthly_property_management_fee > 0) {
+    body.monthly_property_management_fee = moneyStr(values.monthly_property_management_fee);
+  }
+  if (values.monthly_utility_fee != null && values.monthly_utility_fee > 0) {
+    body.monthly_utility_fee = moneyStr(values.monthly_utility_fee);
+  }
   return body;
 }
 
@@ -129,6 +137,8 @@ export default function RentalPanel() {
             filing_date: dayjs("2025-04-01"),
             lease_start: null,
             lease_end: null,
+            monthly_property_management_fee: 380,
+            monthly_utility_fee: 120,
           }}
         >
           <Alert
@@ -137,6 +147,13 @@ export default function RentalPanel() {
             style={{ marginBottom: 16 }}
             message="应交租日为每月「几日」（1–31）；滞纳金自交租日次日起算至起诉日（含）。欠租起止日仅作本金统计口径。月份范围：有租期起止则自租期起至 min(租期止,起诉日)；否则自欠租起点至起诉日。占用费规则不变，无搬离须填起诉日。"
           />
+          {/* <Alert
+            type="warning"
+            showIcon
+            style={{ marginBottom: 16 }}
+            message="物业费 / 水电费滞纳金（业务评审 Demo）"
+            description="与租金**一次试算**：可选填下方「月物业费」「月水电费（合并示意）」；与租金共用同一「每月第几日应付」及滞纳金月份范围、LPR 按日规则（见计算口径说明中的 Demo 条）。未定稿前字段与拆项可再调。"
+          /> */}
 
           <Row gutter={16}>
             <Col xs={24} sm={12} md={8}>
@@ -164,6 +181,20 @@ export default function RentalPanel() {
                 rules={[{ required: true, message: "请选择" }]}
               >
                 <DatePicker style={{ width: "100%" }} />
+              </Form.Item>
+            </Col>
+          </Row>
+
+          <Title level={5}>物业费 / 水电费（Demo，可选）</Title>
+          <Row gutter={16}>
+            <Col xs={24} sm={12} md={8}>
+              <Form.Item name="monthly_property_management_fee" label="月物业费（元，0 或不填则不计）">
+                <InputNumber min={0} precision={2} style={{ width: "100%" }} />
+              </Form.Item>
+            </Col>
+            <Col xs={24} sm={12} md={8}>
+              <Form.Item name="monthly_utility_fee" label="月水电费（元，合并示意；0 或不填则不计）">
+                <InputNumber min={0} precision={2} style={{ width: "100%" }} />
               </Form.Item>
             </Col>
           </Row>

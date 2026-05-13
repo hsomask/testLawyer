@@ -81,6 +81,13 @@ Python 入口：`legal_calc.private_lending.calculate_private_lending`。HTTP：
 - **止算**：有 **实际搬离日** 则至该日（含）；否则 **起诉日 + 30 日**（含）。若止日早于起算日，**不产生占用费行**（在 `messages` 中说明）。
 - **标准**：`(月租金 / 30) × 2 × 自然日数`（全程 `Decimal`）。
 
+### C. 物业费 / 水电费滞纳金（与租金一次试算 · 业务评审 Demo）
+
+- **PRD 依据**：§0.1 第 18 条（与**已迭代后的租金滞纳金**同构：一年期 LPR 按日、÷365×自然日、**无四倍**、至 **`filing_date`（含）**、按行舍入再累加）。
+- **请求字段**（可选）：`monthly_property_management_fee`、`monthly_utility_fee`（月金额，≥0；未传或 **0** 则**不计**该项滞纳金）。
+- **Demo 假设（供业务评审，可后续改 PRD 调整）**：与租金共用 **`rent_due_day_of_month`** 作为每月「应付日」序位；滞纳金**所涉自然月范围**与租金滞纳金**相同**；基数分别为对应月费；`fee_category` 为 **物业费滞纳金**、**水电费滞纳金**（水电为**合并示意**）。引擎按自然月循环，每月内依次输出租金、物业、水电（若启用）的滞纳金分段行。
+- **未定稿项**：是否独立交费日、抄表周期、分项拆 API 等，由业务定稿后再改本节与字段表。
+
 Python 入口：`legal_calc.rental.calculate_rental`。Excel：`legal_calc.export.export_rental_workbook`。HTTP：`POST /api/rental/calculate`、`POST /api/rental/export/excel`。
 
 ---
@@ -122,7 +129,7 @@ Python 入口：`legal_calc.rental.calculate_rental`。Excel：`legal_calc.expor
 | 民间借贷利息小计 / 冲抵后本金 / 本息合计（JSON + Excel + 前端） | **已实现** | 见 §3.1、`CalculationResult` 三字段 |
 | 约定利率 0 与无约定分支的专项展示 | **部分**：仍走既有分支；可按 §0.1 第 14 条复查 |
 | 租赁 `rent_due_day_of_month` + 滞纳至起诉日 + 欠租不裁滞纳金 | **已实现** | `legal_calc/rental/` |
-| 水电 / 物业费滞纳金 | **未实现** | §0.1 第 18 条 |
+| 水电 / 物业费滞纳金（§0.1 第 18 条） | **Demo 已实现** | 可选 `monthly_property_management_fee`、`monthly_utility_fee`；与租金同次 `calculate_rental`；见 **§2.C** |
 | 界面「20 号」等展示 | **本期不做** | §0.1 第 17 条 |
 
 ---
@@ -151,7 +158,7 @@ Python 入口：`legal_calc.rental.calculate_rental`。Excel：`legal_calc.expor
 | 前端 Tab 文案 | 「房屋租赁」 |
 | 下载文件名 | `房屋租赁计算书.xlsx` |
 
-**字段与校验（摘要）**：`monthly_rent`、`arrears_period_start` / `arrears_period_end`（本金统计）、**`rent_due_day_of_month`（1–31）**、`contract_termination_date` 必填；`filing_date` 在计滞纳金时**必填**（与引擎 `assert` 一致；无搬离时亦用于占用费止日+30）。`actual_vacate_date` 与 `filing_date` 至少其一满足占用费规则（见 §0 备忘 8.x）。可选 `lease_start` / `lease_end`：用于限定滞纳金所涉**月份范围**的起止（与欠租区间脱钩）。
+**字段与校验（摘要）**：`monthly_rent`、`arrears_period_start` / `arrears_period_end`（本金统计）、**`rent_due_day_of_month`（1–31）**、`contract_termination_date` 必填；`filing_date` 在计滞纳金时**必填**（与引擎 `assert` 一致；无搬离时亦用于占用费止日+30）。`actual_vacate_date` 与 `filing_date` 至少其一满足占用费规则（见 §0 备忘 8.x）。可选 `lease_start` / `lease_end`：用于限定滞纳金所涉**月份范围**的起止（与欠租区间脱钩）。**可选（Demo）**：`monthly_property_management_fee`、`monthly_utility_fee`（见 **§2.C**）。
 
 **前端预校验**：无「实际搬离日」且无「起诉日」时，宜在调用 API 前提示用户，与后端 `RentalRequest` 一致。
 

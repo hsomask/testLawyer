@@ -106,6 +106,28 @@ def test_export_rental_workbook() -> None:
     assert bio.getvalue()[:2] == b"PK"
 
 
+def test_demo_property_and_utility_late_same_request() -> None:
+    """§0.1 第 18 条 Demo：物业费/水电与租金一次试算、同构滞纳金规则。"""
+    req = RentalRequest(
+        monthly_rent=Decimal("3000.00"),
+        monthly_property_management_fee=Decimal("400.00"),
+        monthly_utility_fee=Decimal("150.00"),
+        arrears_period_start=date(2025, 1, 1),
+        arrears_period_end=date(2025, 1, 31),
+        rent_due_day_of_month=26,
+        contract_termination_date=date(2025, 3, 1),
+        actual_vacate_date=None,
+        filing_date=date(2025, 4, 1),
+    )
+    out = calculate_rental(req)
+    cats = [ln.fee_category for ln in out.lines]
+    assert cats.count("租金滞纳金") >= 1
+    assert cats.count("物业费滞纳金") >= 1
+    assert cats.count("水电费滞纳金") >= 1
+    assert "租金滞纳金小计" in "".join(out.messages)
+    assert "物业费滞纳金小计（Demo）" in "".join(out.messages)
+
+
 def test_line_amounts_decimal() -> None:
     req = RentalRequest(
         monthly_rent=Decimal("5000"),
