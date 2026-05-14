@@ -100,6 +100,34 @@ def test_finance_convention_rejected() -> None:
         )
 
 
+def test_agreed_rate_zero_requires_due_date() -> None:
+    with pytest.raises(ValueError, match="到期日"):
+        PrivateLendingRequest(
+            principal=Decimal("10000"),
+            loan_date=date(2020, 1, 1),
+            end_date=date(2021, 1, 1),
+            agreed_annual_rate=Decimal("0"),
+        )
+
+
+def test_agreed_rate_zero_matches_no_agreed_path() -> None:
+    """§0.1 第 14 条：约定年化 0 与未提供约定利率同一无约定计息路径。"""
+    common = dict(
+        principal=Decimal("100000"),
+        loan_date=date(2020, 3, 15),
+        repayments=[],
+        end_date=date(2021, 6, 30),
+        due_date=date(2020, 12, 31),
+        lpr_document_month=date(2021, 6, 1),
+    )
+    a = calculate_private_lending(PrivateLendingRequest(**common, agreed_annual_rate=None))
+    b = calculate_private_lending(PrivateLendingRequest(**common, agreed_annual_rate=Decimal("0")))
+    sig = lambda out: [(ln.amount, ln.day_count, ln.period_start, ln.period_end) for ln in out.lines]
+    assert sig(a) == sig(b)
+    assert any("无约定·期内不计息" in ln.stage_description for ln in b.lines)
+    assert any("无约定·逾期一年期 LPR" in ln.stage_description for ln in b.lines)
+
+
 def test_repayment_day_in_next_segment() -> None:
     """还款日计入下一段首日：第一段不含还款日。"""
     req = PrivateLendingRequest(
