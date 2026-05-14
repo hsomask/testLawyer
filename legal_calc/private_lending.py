@@ -49,7 +49,11 @@ class PrivateLendingRequest(BaseModel):
     end_date: date
     filing_date: date | None = None
     lpr_document_month: date | None = None
-    agreed_annual_rate: Decimal | None = Field(default=None, ge=0)
+    agreed_annual_rate: Decimal | None = Field(
+        default=None,
+        ge=0,
+        description="约定年化利率（小数）；未填或 **0** 视同无约定，须填 due_date，逾期按一年期 LPR（§0.1 第 14 条）",
+    )
     due_date: date | None = None
     convention: InterestConvention = Field(default=InterestConvention.CIVIL_365_SIMPLE)
 
@@ -64,8 +68,12 @@ class PrivateLendingRequest(BaseModel):
             raise ValueError(
                 "本计算器不适用银行借款、金融公司等「复利 / 360 天/年」产品；请使用民间借贷单利 365 口径。"
             )
-        if self.agreed_annual_rate is None and self.due_date is None:
-            raise ValueError("无约定年化利率时必须提供 due_date（到期日）")
+        # §0.1 第 14 条：约定利率为 0 与无约定一并处理；须填到期日以定逾期起点
+        effective_agreed = (
+            self.agreed_annual_rate is not None and self.agreed_annual_rate > 0
+        )
+        if not effective_agreed and self.due_date is None:
+            raise ValueError("无约定年化利率或约定年化利率为 0 时必须提供 due_date（到期日）")
         return self
 
 
@@ -156,9 +164,11 @@ def _accrue_lines_for_open_interval(
     if hi_excl <= lo or principal <= 0:
         return Decimal("0")
 
-    has_agreed = req.agreed_annual_rate is not None
-    agreed = req.agreed_annual_rate or Decimal("0")
-    overdue_start = (req.due_date + timedelta(days=1)) if not has_agreed and req.due_date else None
+    has_agreed = req.agreed_annual_rate is not None and req.agreed_annual_rate > 0
+    agreed = req.agreed_annual_rate if has_agreed else Decimal("0")
+    overdue_start = (
+        (req.due_date + timedelta(days=1)) if not has_agreed and req.due_date else None
+    )
 
     need_lpr_cuts = (
         not has_agreed
@@ -245,7 +255,7 @@ def calculate_private_lending(
     assumptions_used: list[str] = [
         "POLICY: 2020-08-19（含）旧规则最后一日；2020-08-20 起新规则；跨区间强制拆段",
         "计息末日：有起诉日则为 max(截止计息日, 起诉日)；LPR×4：起诉月优先，否则文档月，否则计息末日所在月（月末回溯）",
-        "有约定：min(约定,司法上限)；无约定：期内零息，逾期一年期 LPR（无四倍）",
+        "有约定（年化>0）：min(约定,司法上限)；无约定或约定年化=0：期内零息，逾期一年期 LPR（无四倍）；约定=0 须填到期日（§0.1 第 14 条）",
         "冲抵：先息后本；半开区间 [锚点,还款日)；本金归零后不再计息",
         "精度：Decimal；金额按分四舍五入，按行舍入后参与冲抵",
     ]

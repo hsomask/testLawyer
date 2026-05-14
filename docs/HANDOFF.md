@@ -16,6 +16,7 @@
 - 计息末日 **`D_eff`**：有 `filing_date` 时为 **`max(end_date, filing_date)`**（含当日）；冲抵、末段、还款晚于 `D_eff` 的 WARN 均按 `D_eff`。
 - `lpr_four_x_reference_date`：无起诉/文档月时回退 **计息末日 `D_eff` 所在月**（月末回溯）。
 - **利息小计 / 冲抵后剩余本金 / 本息合计**（PRD §3.1）：`CalculationResult` 三字段 **`interest_subtotal`、`remaining_principal`、`total_principal_and_interest`**；试算 JSON、民间借贷 Excel（明细末 + 审计键）、`PrivateLendingPanel` 结果区已对齐；租赁试算该三项为 **`null`**。
+- **约定年化利率 = 0**：与无约定**同一计息路径**（期内零息、逾期一年期 LPR）；**须填到期日** `due_date`（§0.1 第 14 条）。
 
 **房屋租赁（API 有破坏性变更）**
 
@@ -27,8 +28,8 @@
 
 **版本与测试**
 
-- `legal_calc/version.py`：`RULE_VERSION = "1.4.0-prd-2026-05-12"`（以文件为准）。
-- 全量测试当前：**36 passed**（`python -m pytest`）。
+- `legal_calc/version.py`：`RULE_VERSION = "1.4.1-prd-2026-05-12"`（以文件为准）。
+- 全量测试当前：**38 passed**（`python -m pytest`）。
 
 **未完项**：见下文 **「待完成事项」**（与 `Legal_Logic_Implementation.md` **§3.2** 一致）。
 
@@ -48,10 +49,9 @@
 | 序号 | 事项 | 说明 / 卡住点 | 建议落点 |
 |------|------|-----------------|----------|
 | 1 | 水电 / 物业费滞纳金 **定稿与扩展** | **Demo** 已实现（Legal **§2.C**：可选月费、与租金同算、同 LPR 规则）；待业务确认：独立应付日、抄表周期、分项/拆 API、与主文表述 | 回写 PRD §2.C 后迭代 `RentalRequest` / `rental/engine.py` |
-| 2 | **约定年化利率 = 0** | 业务要求与「无约定」及 `D_eff` 一致（§0.1 **第 14 条**）；代码仍走「有约定」分支时需 **显式分支或归并** | `legal_calc/private_lending.py` + `tests/test_private_lending.py` |
-| 3 | 租赁 **「该月已付清则不计滞纳」** | 当前 **无每月实付/欠付** 输入；引擎只能按月份范围 **逐月出表** | `RentalRequest` 增可选「月实付」或标记；`rental/engine.py` |
-| 4 | 界面「**20 号**」等展示优化 | Legal §0.1 **第 17 条**：**本期关闭**，待业务再给截图/文案 | `web/src/RentalPanel.tsx` 或后续 |
-| 5 | 产品级 backlog（与计算无关） | 从未在本仓库实现：HTTPS、鉴权、案件表、顶栏搜索等 | 见 `Product_System_Architecture.md`、**§2.4** 未纳入项 |
+| 2 | 租赁 **「该月已付清则不计滞纳」** | 当前 **无每月实付/欠付** 输入；引擎只能按月份范围 **逐月出表** | `RentalRequest` 增可选「月实付」或标记；`rental/engine.py` |
+| 3 | 界面「**20 号**」等展示优化 | Legal §0.1 **第 17 条**：**本期关闭**，待业务再给截图/文案 | `web/src/RentalPanel.tsx` 或后续 |
+| 4 | 产品级 backlog（与计算无关） | 从未在本仓库实现：HTTPS、鉴权、案件表、顶栏搜索等 | 见 `Product_System_Architecture.md`、**§2.4** 未纳入项 |
 
 **备注**：改规则仍须 **先改 PRD**（尤其 §0 / §0.1 / §3.2），再改代码与 pytest（见下文「已知注意点」）。
 

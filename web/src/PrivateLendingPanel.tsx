@@ -172,12 +172,15 @@ export default function PrivateLendingPanel() {
 
           <Row gutter={16}>
             <Col xs={24} sm={12} md={8}>
-              <Form.Item name="agreed_annual_rate" label="约定年化利率（小数，如 0.12 即 12%）">
+              <Form.Item
+                name="agreed_annual_rate"
+                label="约定年化利率（小数，如 0.12 即 12%；填 0 视同无约定，须填到期日）"
+              >
                 <InputNumber min={0} max={1} step={0.0001} style={{ width: "100%" }} />
               </Form.Item>
             </Col>
             <Col xs={24} sm={12} md={8}>
-              <Form.Item name="due_date" label="到期日（无约定利率时必填）">
+              <Form.Item name="due_date" label="到期日（未填约定利率或约定为 0 时必填）">
                 <DatePicker style={{ width: "100%" }} />
               </Form.Item>
             </Col>
