@@ -40,21 +40,56 @@ export function formatApiError(data: unknown): string {
   return "请求失败";
 }
 
+/** 将金额字符串安全转为整数分，避免浮点误差 */
+function amountToCents(amount: string): number {
+  const s = amount.trim();
+  if (!s) return 0;
+  // 处理 "123.45" 或 "123" 格式
+  const dot = s.indexOf(".");
+  if (dot === -1) return Number(s) * 100;
+  const intPart = s.slice(0, dot);
+  let decPart = s.slice(dot + 1);
+  if (decPart.length === 0) return Number(intPart) * 100;
+  if (decPart.length === 1) decPart = decPart + "0";
+  return Number(intPart) * 100 + Number(decPart.slice(0, 2));
+}
+
+/** 整数分转回元字符串，保留两位小数 */
+function centsToYuan(cents: number): string {
+  const sign = cents < 0 ? "-" : "";
+  const abs = Math.abs(cents);
+  const yuan = Math.floor(abs / 100);
+  const fen = abs % 100;
+  return `${sign}${yuan}.${fen.toString().padStart(2, "0")}`;
+}
+
+/** 明细行金额加总（字符串安全，按分转换后求和） */
+export function sumLineAmounts(lines: ApiLine[]): string {
+  const totalCents = lines.reduce((sum, ln) => sum + amountToCents(ln.amount), 0);
+  return centsToYuan(totalCents);
+}
+
+/** 按费用类目分组小计 */
+export function sumByFeeCategory(lines: ApiLine[]): Record<string, string> {
+  const map = new Map<string, number>();
+  for (const ln of lines) {
+    const prev = map.get(ln.fee_category) ?? 0;
+    map.set(ln.fee_category, prev + amountToCents(ln.amount));
+  }
+  const result: Record<string, string> = {};
+  for (const [cat, cents] of map) {
+    result[cat] = centsToYuan(cents);
+  }
+  return result;
+}
+
 export const lineColumns: ColumnsType<ApiLine & { key: string }> = [
+  { title: "费用类目", dataIndex: "fee_category", width: 120 },
   {
-    title: "费用类目",
-    dataIndex: "fee_category",
-    width: 220,
-    render: (_, row) => (
-      <span>
-        {row.fee_category}
-        {row.stage_description ? (
-          <Text type="secondary" style={{ display: "block", fontSize: 12 }}>
-            {row.stage_description}
-          </Text>
-        ) : null}
-      </span>
-    ),
+    title: "阶段说明",
+    dataIndex: "stage_description",
+    width: 240,
+    render: (v: string) => v ? <Text style={{ fontSize: 13 }}>{v}</Text> : null,
   },
   { title: "计算基数", dataIndex: "principal_base", align: "right" },
   { title: "利率标准", dataIndex: "rate_standard", ellipsis: true },
