@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { Alert, Button, Card, Col, DatePicker, Form, InputNumber, Row, Space, Table, Typography, message } from "antd";
 import dayjs, { type Dayjs } from "dayjs";
-import { formatApiError, lineColumns, type ApiResult } from "./calcShared";
+import { BG, formatApiError, lineColumns, sumLineAmounts, sumByFeeCategory, type ApiResult } from "./calcShared";
 
 const { Title, Text } = Typography;
 
@@ -112,6 +112,13 @@ export default function RentalPanel() {
       setExporting(false);
     }
   };
+
+  const feeSubtotals = useMemo(() => {
+    if (!result?.lines?.length) return null;
+    return sumByFeeCategory(result.lines);
+  }, [result]);
+
+  const feeSubtotalOrder = ["租金滞纳金", "物业费滞纳金", "水电费滞纳金", "房屋占用费"];
 
   const tableData = useMemo(() => {
     if (!result?.lines?.length) return [];
@@ -267,7 +274,17 @@ export default function RentalPanel() {
               规则版本：<Text strong>{result.rule_version}</Text> {result.ok ? <Text type="success">（成功）</Text> : null}
             </Text>
             {result.messages?.length ? (
-              <Alert type="warning" message="提示" description={result.messages.join("；")} />
+              <Alert
+                type="warning"
+                message="提示"
+                description={
+                  <ul style={{ marginBottom: 0, paddingLeft: 20 }}>
+                    {result.messages.map((m, i) => (
+                      <li key={i}>{m}</li>
+                    ))}
+                  </ul>
+                }
+              />
             ) : null}
             {result.assumptions_used?.length ? (
               <Alert
@@ -282,7 +299,31 @@ export default function RentalPanel() {
                 }
               />
             ) : null}
-            <Table columns={lineColumns} dataSource={tableData} scroll={{ x: 900 }} pagination={false} size="small" />
+            {feeSubtotals ? (
+              <Card size="small" title="费用类目小计" style={{ background: BG }}>
+                {feeSubtotalOrder
+                  .filter((cat) => feeSubtotals[cat] !== undefined)
+                  .map((cat) => (
+                    <div key={cat} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0" }}>
+                      <Text>{cat}</Text>
+                      <Text strong>{feeSubtotals[cat]}</Text>
+                    </div>
+                  ))}
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    padding: "8px 0 0",
+                    borderTop: "1px solid #e8e8e8",
+                    marginTop: 4,
+                  }}
+                >
+                  <Text strong>合计</Text>
+                  <Text strong style={{ fontSize: 16 }}>{sumLineAmounts(result.lines)}</Text>
+                </div>
+              </Card>
+            ) : null}
+            <Table columns={lineColumns} dataSource={tableData} scroll={{ x: 1000 }} pagination={false} size="small" />
           </Space>
         </Card>
       )}

@@ -15,7 +15,7 @@ import {
   message,
 } from "antd";
 import dayjs, { type Dayjs } from "dayjs";
-import { formatApiError, lineColumns, type ApiResult } from "./calcShared";
+import { formatApiError, lineColumns, sumLineAmounts, type ApiResult } from "./calcShared";
 
 const { Title, Text } = Typography;
 
@@ -271,6 +271,9 @@ export default function PrivateLendingPanel() {
             <Text>
               规则版本：<Text strong>{result.rule_version}</Text> {result.ok ? <Text type="success">（成功）</Text> : null}
             </Text>
+            {result.messages?.length ? (
+              <Alert type="warning" message="提示" description={result.messages.join("；")} />
+            ) : null}
             {result.assumptions_used?.length ? (
               <Alert
                 type="info"
@@ -297,7 +300,15 @@ export default function PrivateLendingPanel() {
                 </Descriptions.Item>
               </Descriptions>
             ) : null}
-            <Table columns={lineColumns} dataSource={tableData} scroll={{ x: 900 }} pagination={false} size="small" />
+            <Table columns={lineColumns} dataSource={tableData} scroll={{ x: 1000 }} pagination={false} size="small"
+              footer={() => (
+                <div style={{ textAlign: "right" }}>
+                  <Text strong>利息小计：{result.interest_subtotal ?? "—"}</Text>
+                  &emsp;
+                  <Text strong>明细金额合计：{sumLineAmounts(result.lines)}</Text>
+                </div>
+              )}
+            />
           </Space>
         </Card>
       )}
