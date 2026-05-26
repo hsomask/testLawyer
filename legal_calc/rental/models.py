@@ -50,8 +50,8 @@ class RentalRequest(BaseModel):
     )
 
     contract_termination_date: date = Field(description="合同解除日")
-    actual_vacate_date: date | None = Field(default=None, description="实际搬离日；无则占用费止日依赖起诉日+30")
-    filing_date: date | None = Field(default=None, description="起诉日；滞纳金计至该日（含）；无实际搬离时亦必填以计占用费止日")
+    actual_vacate_date: date | None = Field(default=None, description="实际搬离日；无则占用费止日=起诉日+30")
+    filing_date: date = Field(description="起诉日；滞纳金计算至该日（含），必填")
 
     lease_start: date | None = Field(default=None, description="租期起；滞纳金月份范围优先用其作为起点")
     lease_end: date | None = Field(default=None, description="租期止；与起诉日取早作为滞纳金月份范围终点")
@@ -80,10 +80,8 @@ class RentalRequest(BaseModel):
         return v.quantize(Decimal("0.01"))
 
     @model_validator(mode="after")
-    def check_occ_and_dates(self) -> RentalRequest:
-        if self.actual_vacate_date is None and self.filing_date is None:
-            raise ValueError("无「实际搬离日」时必须提供「起诉日」以推算占用费止日（起诉日+30）")
-        if self.filing_date is not None and self.arrears_period_end < self.arrears_period_start:
+    def check_dates(self) -> RentalRequest:
+        if self.arrears_period_end < self.arrears_period_start:
             raise ValueError("arrears_period_end 不能早于 arrears_period_start")
         if self.lease_start is not None and self.lease_end is not None and self.lease_end < self.lease_start:
             raise ValueError("lease_end 不能早于 lease_start")

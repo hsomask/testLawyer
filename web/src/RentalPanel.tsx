@@ -116,10 +116,6 @@ export default function RentalPanel() {
 
   const getPayload = async () => {
     const v = await form.validateFields();
-    if (!v.actual_vacate_date && !v.filing_date) {
-      message.error("未填写「实际搬离日」时，必须填写「起诉日」（用于占用费止日推算）");
-      throw new Error("validation");
-    }
     return buildRentalPayload(v);
   };
 
@@ -285,8 +281,12 @@ export default function RentalPanel() {
               </Form.Item>
             </Col>
             <Col xs={24} sm={12} md={8}>
-              <Form.Item name="filing_date" label="起诉日（无搬离日时必填）">
-                <DatePicker style={{ width: "100%" }} allowClear />
+              <Form.Item
+                name="filing_date"
+                label="起诉日（必填，滞纳金计算至该日）"
+                rules={[{ required: true, message: "请选择起诉日" }]}
+              >
+                <DatePicker style={{ width: "100%" }} />
               </Form.Item>
             </Col>
           </Row>

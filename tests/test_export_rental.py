@@ -215,3 +215,35 @@ def test_rental_excel_grand_total_matches_rental_summary() -> None:
     assert Decimal(str(found)) == result.rental_summary.grand_total, (
         f"Excel 最终总计不一致: {found} != {result.rental_summary.grand_total}"
     )
+
+
+def test_rental_excel_audit_has_rental_grand_total() -> None:
+    """房屋租赁审计信息页包含 rental_grand_total 字段。"""
+    req = _make_req()
+    result = calculate_rental(req)
+    bio = export_rental_workbook(req, result)
+    bio.seek(0)
+    wb = openpyxl.load_workbook(bio)
+    audit = wb["审计信息"]
+    labels = [audit.cell(row=r, column=1).value for r in range(2, audit.max_row + 1)]
+    assert "rental_grand_total" in labels, "审计信息缺少 rental_grand_total"
+
+
+def test_rental_excel_grand_total_differs_from_line_amount_sum_when_paid() -> None:
+    """有 paid_rent_amount 时，grand_total 与 line_amount_sum 不一致（明细行不含扣减）。"""
+    req = RentalRequest(
+        monthly_rent=Decimal("3000.00"),
+        arrears_period_start=date(2025, 1, 1),
+        arrears_period_end=date(2025, 1, 31),
+        rent_due_day_of_month=26,
+        contract_termination_date=date(2025, 3, 1),
+        actual_vacate_date=date(2025, 3, 15),
+        filing_date=date(2025, 4, 1),
+        paid_rent_amount=Decimal("1000.00"),
+    )
+    result = calculate_rental(req)
+    assert result.rental_summary is not None
+    line_sum = result.line_amount_sum()
+    grand = result.rental_summary.grand_total
+    # line_amount_sum > grand_total（因为 line_amount_sum 含完整的应收租金）
+    assert line_sum > grand, f"line_amount_sum={line_sum} 应大于 grand_total={grand}"

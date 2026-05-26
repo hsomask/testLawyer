@@ -173,10 +173,12 @@ def _extra_fee_late_lines(
     late_hi_excl: date,
     lpr: JsonFileLprProvider,
     lines: list[ReportLineItem],
+    messages: list[str],
 ) -> tuple[Decimal, Decimal, Decimal]:
     """
     额外费用滞纳金：每项一条。
     取违约开始日（应付日次日）的固定 LPR，不按发布日分段。
+    due_date 晚于或等于起诉日时跳过并提示。
     返回 (utility_subtotal, property_subtotal, other_subtotal)。
     """
     category_map = {
@@ -185,11 +187,16 @@ def _extra_fee_late_lines(
         "other": _FEE_CAT_OTHER,
     }
     subtotals: dict[str, Decimal] = defaultdict(lambda: Decimal("0"))
+    filing_date = late_hi_excl - timedelta(days=1)
 
     for item in items:
         fee_cat = category_map[item.category]
         accrual_start = item.due_date + timedelta(days=1)
         if accrual_start >= late_hi_excl:
+            messages.append(
+                f"额外费用「{item.name}」：应付日 {item.due_date.isoformat()} 不早于起诉日 {filing_date.isoformat()}，"
+                "无滞纳期间，跳过"
+            )
             continue
         days = (late_hi_excl - accrual_start).days
         if days <= 0:
@@ -232,7 +239,6 @@ def _occupancy_lines(req: RentalRequest, lines: list[ReportLineItem], messages: 
     if req.actual_vacate_date is not None:
         occ_end_inc = req.actual_vacate_date
     else:
-        assert req.filing_date is not None
         occ_end_inc = req.filing_date + timedelta(days=30)
 
     if occ_end_inc < occ_start:
@@ -280,7 +286,6 @@ def calculate_rental(
     lines: list[ReportLineItem] = []
     messages: list[str] = []
 
-    assert req.filing_date is not None
     late_hi_excl = req.filing_date + timedelta(days=1)
 
     range_lo, range_hi = _late_fee_month_range(req)
@@ -288,13 +293,18 @@ def calculate_rental(
     # --- 欠租本金 ---
     rent_receivable = _arrears_principal_lines(req, lines)
     arrears_principal = rent_receivable - req.paid_rent_amount
+    if arrears_principal < 0:
+        messages.append(
+            f"已支付租金 {req.paid_rent_amount} 超过应收租金 {rent_receivable}，欠租本金小计按 0 处理"
+        )
+        arrears_principal = Decimal("0")
 
     # --- 租金滞纳金 ---
     rent_late = _rent_late_fee_lines(req, late_hi_excl, lpr, lines)
 
     # --- 额外费用滞纳金 ---
     extra_items = req.extra_fee_items
-    util_late, prop_late, other_late = _extra_fee_late_lines(extra_items, late_hi_excl, lpr, lines)
+    util_late, prop_late, other_late = _extra_fee_late_lines(extra_items, late_hi_excl, lpr, lines, messages)
 
     # --- 占用费 ---
     occ_total = _occupancy_lines(req, lines, messages)
@@ -333,6 +343,10 @@ def calculate_rental(
         ),
         "占用费：按自然月拆分：月租金 / 当月自然日天数 × 当月占用天数 × 2",
         "金额：Decimal；按行四舍五入到分",
+        (
+            "line_amount_sum 为明细行金额（不含已支付租金扣减），"
+            "最终总计以 rental_summary.grand_total 为准"
+        ),
     ]
     if req.paid_rent_amount > 0:
         assumptions_used.append(

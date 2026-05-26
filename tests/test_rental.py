@@ -514,6 +514,72 @@ def test_grand_total_equals_sum_of_subtotals() -> None:
     assert rs.grand_total == expected, f"grand_total={rs.grand_total} != {expected}"
 
 
+# ── paid_rent 超过应收租金 ────────────────────────────────────────
+
+
+def test_paid_rent_exceeds_receivable_arrears_principal_zero() -> None:
+    """paid_rent_amount 超过应收租金时，欠租本金小计按 0 处理。"""
+    out = _rental(
+        Decimal("3000"),
+        arrears_period_start=date(2025, 1, 1),
+        arrears_period_end=date(2025, 1, 15),  # 约半个月
+        paid_rent_amount=Decimal("5000"),  # 超过应收
+        filing_date=date(2025, 4, 1),
+    )
+    rs = out.rental_summary
+    assert rs is not None
+    assert rs.arrears_principal_subtotal == Decimal("0.00")
+    assert any("按 0 处理" in m for m in out.messages)
+
+
+def test_grand_total_uses_deducted_arrears_principal() -> None:
+    """有 paid_rent_amount 时，grand_total 使用扣减后的欠租本金。"""
+    out = _rental(
+        Decimal("3000"),
+        arrears_period_start=date(2025, 1, 1),
+        arrears_period_end=date(2025, 1, 31),
+        paid_rent_amount=Decimal("1000"),
+        contract_termination_date=date(2025, 2, 1),
+        actual_vacate_date=date(2025, 2, 1),
+        filing_date=date(2025, 3, 1),
+    )
+    rs = out.rental_summary
+    assert rs is not None
+    # 欠租本金 = 3000 - 1000 = 2000
+    assert rs.arrears_principal_subtotal == Decimal("2000.00")
+    # line_amount_sum 不含扣减（只含明细行金额）
+    line_sum = out.line_amount_sum()
+    # grand_total 应 = line_sum - paid_rent_amount（因为欠租本金扣减了 1000）
+    assert rs.grand_total == line_sum - Decimal("1000")
+
+
+# ── 额外费用 due_date 跳过 ────────────────────────────────────────
+
+
+def test_extra_fee_due_date_after_filing_skipped() -> None:
+    """extra_fee_items 的 due_date 晚于或等于 filing_date 时跳过并提示。"""
+    from legal_calc.rental.models import RentalExtraFeeItem
+
+    out = _rental(
+        Decimal("3000"),
+        filing_date=date(2025, 4, 1),
+        extra_fee_items=[
+            RentalExtraFeeItem(
+                category="utility", name="到期后电费", amount=Decimal("500"),
+                due_date=date(2025, 4, 1),  # 等于起诉日
+            ),
+            RentalExtraFeeItem(
+                category="other", name="到期后维修", amount=Decimal("300"),
+                due_date=date(2025, 5, 1),  # 晚于起诉日
+            ),
+        ],
+    )
+    # 两条都跳过
+    assert out.rental_summary.utility_late_fee_subtotal == Decimal("0")
+    assert out.rental_summary.other_late_fee_subtotal == Decimal("0")
+    assert any("跳过" in m for m in out.messages)
+
+
 # ── 导入 quantize_money 供测试用 ──────────────────────────────────
 
 from legal_calc.money import quantize_money

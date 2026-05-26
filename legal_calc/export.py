@@ -219,6 +219,12 @@ def _fill_audit(
         ws.append([])
         ws.append(
             [
+                "rental_grand_total",
+                str(result.rental_summary.grand_total),
+            ]
+        )
+        ws.append(
+            [
                 "rental_summary",
                 result.rental_summary.model_dump_json(indent=2),
             ]
