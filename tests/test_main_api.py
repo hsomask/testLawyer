@@ -188,8 +188,10 @@ def test_rental_api_lines_distinguishable_by_fee_category():
         "contract_termination_date": "2025-03-01",
         "actual_vacate_date": "2025-03-15",
         "filing_date": "2025-04-01",
-        "monthly_property_management_fee": "200.00",
-        "monthly_utility_fee": "100.00",
+        "extra_fee_items": [
+            {"category": "property", "name": "物业费", "amount": "200.00", "due_date": "2025-01-26"},
+            {"category": "utility", "name": "水电费", "amount": "100.00", "due_date": "2025-01-26"},
+        ],
     }
     r = c.post("/api/rental/calculate", json=body)
     assert r.status_code == 200

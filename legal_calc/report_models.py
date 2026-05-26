@@ -21,6 +21,20 @@ class ReportLineItem(BaseModel):
     amount: Decimal = Field(description="应付金额（利息/滞纳金等）")
 
 
+class RentalSummary(BaseModel):
+    """房屋租赁结构化汇总（PRD §二）。"""
+
+    rent_receivable_subtotal: Decimal = Field(description="应收租金小计")
+    paid_rent_amount: Decimal = Field(description="已支付租金合计")
+    arrears_principal_subtotal: Decimal = Field(description="欠租本金小计 = 应收租金 - 已支付租金")
+    rent_late_fee_subtotal: Decimal = Field(description="租金滞纳金小计")
+    utility_late_fee_subtotal: Decimal = Field(description="水电费滞纳金小计")
+    property_late_fee_subtotal: Decimal = Field(description="物业费滞纳金小计")
+    other_late_fee_subtotal: Decimal = Field(description="其他费用滞纳金小计")
+    occupancy_fee_subtotal: Decimal = Field(description="房屋占用费小计")
+    grand_total: Decimal = Field(description="最终总计")
+
+
 class CalculationResult(BaseModel):
     """单次计算统一出口，便于 API 与导出。"""
 
@@ -41,6 +55,11 @@ class CalculationResult(BaseModel):
     total_principal_and_interest: Decimal | None = Field(
         default=None,
         description="本息合计：冲抵后剩余本金 + 利息小计",
+    )
+    # 房屋租赁 PRD §二
+    rental_summary: RentalSummary | None = Field(
+        default=None,
+        description="房屋租赁结构化汇总；民间借贷为 None",
     )
 
     def line_amount_sum(self) -> Decimal:

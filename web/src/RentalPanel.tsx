@@ -1,9 +1,31 @@
 import { useMemo, useState } from "react";
-import { Alert, Button, Card, Col, DatePicker, Form, InputNumber, Row, Space, Table, Typography, message } from "antd";
+import {
+  Alert,
+  Button,
+  Card,
+  Col,
+  DatePicker,
+  Form,
+  Input,
+  InputNumber,
+  Row,
+  Select,
+  Space,
+  Table,
+  Typography,
+  message,
+} from "antd";
 import dayjs, { type Dayjs } from "dayjs";
-import { BG, formatApiError, lineColumns, sumLineAmounts, sumByFeeCategory, type ApiResult } from "./calcShared";
+import { BG, formatApiError, lineColumns, type ApiResult, type RentalSummary } from "./calcShared";
 
 const { Title, Text } = Typography;
+
+type ExtraFeeRow = {
+  category: "utility" | "property" | "other";
+  name: string;
+  amount: number | null;
+  due_date: Dayjs | null;
+};
 
 function moneyStr(n: number): string {
   return n.toFixed(2);
@@ -11,8 +33,7 @@ function moneyStr(n: number): string {
 
 function buildRentalPayload(values: {
   monthly_rent: number;
-  monthly_property_management_fee?: number | null;
-  monthly_utility_fee?: number | null;
+  paid_rent_amount?: number | null;
   arrears_period_start: Dayjs;
   arrears_period_end: Dayjs;
   rent_due_day_of_month: number;
@@ -21,6 +42,7 @@ function buildRentalPayload(values: {
   filing_date?: Dayjs | null;
   lease_start?: Dayjs | null;
   lease_end?: Dayjs | null;
+  extra_fee_items?: ExtraFeeRow[];
 }) {
   const body: Record<string, unknown> = {
     monthly_rent: moneyStr(values.monthly_rent),
@@ -29,18 +51,61 @@ function buildRentalPayload(values: {
     rent_due_day_of_month: values.rent_due_day_of_month,
     contract_termination_date: values.contract_termination_date.format("YYYY-MM-DD"),
   };
+  if (values.paid_rent_amount != null && values.paid_rent_amount > 0) {
+    body.paid_rent_amount = moneyStr(values.paid_rent_amount);
+  }
   if (values.actual_vacate_date)
     body.actual_vacate_date = values.actual_vacate_date.format("YYYY-MM-DD");
   if (values.filing_date) body.filing_date = values.filing_date.format("YYYY-MM-DD");
   if (values.lease_start) body.lease_start = values.lease_start.format("YYYY-MM-DD");
   if (values.lease_end) body.lease_end = values.lease_end.format("YYYY-MM-DD");
-  if (values.monthly_property_management_fee != null && values.monthly_property_management_fee > 0) {
-    body.monthly_property_management_fee = moneyStr(values.monthly_property_management_fee);
-  }
-  if (values.monthly_utility_fee != null && values.monthly_utility_fee > 0) {
-    body.monthly_utility_fee = moneyStr(values.monthly_utility_fee);
+  // 额外费用项目
+  if (values.extra_fee_items?.length) {
+    body.extra_fee_items = values.extra_fee_items
+      .filter((it) => it.amount != null && it.amount > 0 && it.due_date && it.name.trim())
+      .map((it) => ({
+        category: it.category,
+        name: it.name.trim(),
+        amount: moneyStr(it.amount!),
+        due_date: it.due_date!.format("YYYY-MM-DD"),
+      }));
   }
   return body;
+}
+
+function renderSummaryCard(rs: RentalSummary) {
+  const items: [string, string][] = [
+    ["应收租金小计", rs.rent_receivable_subtotal],
+    ["已支付租金合计", rs.paid_rent_amount],
+    ["欠租本金小计", rs.arrears_principal_subtotal],
+    ["租金滞纳金小计", rs.rent_late_fee_subtotal],
+    ["水电费滞纳金小计", rs.utility_late_fee_subtotal],
+    ["物业费滞纳金小计", rs.property_late_fee_subtotal],
+    ["其他费用滞纳金小计", rs.other_late_fee_subtotal],
+    ["房屋占用费小计", rs.occupancy_fee_subtotal],
+  ];
+  return (
+    <Card size="small" title="费用汇总" style={{ background: BG }}>
+      {items.map(([label, value]) => (
+        <div key={label} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0" }}>
+          <Text>{label}</Text>
+          <Text strong>{value}</Text>
+        </div>
+      ))}
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          padding: "8px 0 0",
+          borderTop: "1px solid #e8e8e8",
+          marginTop: 4,
+        }}
+      >
+        <Text strong>最终总计</Text>
+        <Text strong style={{ fontSize: 16 }}>{rs.grand_total}</Text>
+      </div>
+    </Card>
+  );
 }
 
 export default function RentalPanel() {
@@ -113,13 +178,6 @@ export default function RentalPanel() {
     }
   };
 
-  const feeSubtotals = useMemo(() => {
-    if (!result?.lines?.length) return null;
-    return sumByFeeCategory(result.lines);
-  }, [result]);
-
-  const feeSubtotalOrder = ["租金滞纳金", "物业费滞纳金", "水电费滞纳金", "房屋占用费"];
-
   const tableData = useMemo(() => {
     if (!result?.lines?.length) return [];
     return result.lines.map((ln, i) => ({
@@ -144,23 +202,16 @@ export default function RentalPanel() {
             filing_date: dayjs("2025-04-01"),
             lease_start: null,
             lease_end: null,
-            monthly_property_management_fee: 380,
-            monthly_utility_fee: 120,
+            paid_rent_amount: null,
+            extra_fee_items: [],
           }}
         >
           <Alert
             type="info"
             showIcon
             style={{ marginBottom: 16 }}
-            message="应交租日为每月「几日」（1–31）；滞纳金自交租日次日起算至起诉日（含）。欠租起止日仅作本金统计口径。月份范围：有租期起止则自租期起至 min(租期止,起诉日)；否则自欠租起点至起诉日。占用费规则不变，无搬离须填起诉日。"
+            message="滞纳金不再按 LPR 发布日分段，取违约开始日的固定 LPR。占用费按自然月天数拆分。欠租本金按自然月折算。"
           />
-          {/* <Alert
-            type="warning"
-            showIcon
-            style={{ marginBottom: 16 }}
-            message="物业费 / 水电费滞纳金（业务评审 Demo）"
-            description="与租金**一次试算**：可选填下方「月物业费」「月水电费（合并示意）」；与租金共用同一「每月第几日应付」及滞纳金月份范围、LPR 按日规则（见计算口径说明中的 Demo 条）。未定稿前字段与拆项可再调。"
-          /> */}
 
           <Row gutter={16}>
             <Col xs={24} sm={12} md={8}>
@@ -192,21 +243,19 @@ export default function RentalPanel() {
             </Col>
           </Row>
 
-          <Title level={5}>物业费 / 水电费（Demo，可选）</Title>
+          <Title level={5}>欠租本金</Title>
           <Row gutter={16}>
             <Col xs={24} sm={12} md={8}>
-              <Form.Item name="monthly_property_management_fee" label="月物业费（元，0 或不填则不计）">
-                <InputNumber min={0} precision={2} style={{ width: "100%" }} />
-              </Form.Item>
-            </Col>
-            <Col xs={24} sm={12} md={8}>
-              <Form.Item name="monthly_utility_fee" label="月水电费（元，合并示意；0 或不填则不计）">
+              <Form.Item
+                name="paid_rent_amount"
+                label="已支付租金合计（元，可选；仅扣减欠租本金小计，不影响滞纳金基数）"
+              >
                 <InputNumber min={0} precision={2} style={{ width: "100%" }} />
               </Form.Item>
             </Col>
           </Row>
 
-          <Title level={5}>欠租统计区间（仅本金统计口径）</Title>
+          <Title level={5}>欠租统计区间（本金统计用）</Title>
           <Row gutter={16}>
             <Col xs={24} sm={12} md={8}>
               <Form.Item
@@ -228,7 +277,7 @@ export default function RentalPanel() {
             </Col>
           </Row>
 
-          <Title level={5}>搬离与诉讼（二选一或都填：有搬离日以搬离为准）</Title>
+          <Title level={5}>搬离与诉讼</Title>
           <Row gutter={16}>
             <Col xs={24} sm={12} md={8}>
               <Form.Item name="actual_vacate_date" label="实际搬离日（可选）">
@@ -242,7 +291,7 @@ export default function RentalPanel() {
             </Col>
           </Row>
 
-          <Title level={5}>租期裁剪（可选，与欠租区间求交后计滞纳金）</Title>
+          <Title level={5}>租期裁剪（可选）</Title>
           <Row gutter={16}>
             <Col xs={24} sm={12} md={8}>
               <Form.Item name="lease_start" label="租期起">
@@ -255,6 +304,96 @@ export default function RentalPanel() {
               </Form.Item>
             </Col>
           </Row>
+
+          <Title level={5}>额外费用项目（水电费 / 物业费 / 其他）</Title>
+          <Form.List name="extra_fee_items">
+            {(fields, { add, remove }) => (
+              <>
+                <Table
+                  size="small"
+                  pagination={false}
+                  dataSource={fields.map((f) => ({ key: f.key, field: f }))}
+                  locale={{ emptyText: "暂无额外费用" }}
+                  columns={[
+                    {
+                      title: "类别",
+                      width: 110,
+                      render: (_, r) => (
+                        <Form.Item
+                          name={[r.field.name, "category"]}
+                          rules={[{ required: true }]}
+                          style={{ marginBottom: 0 }}
+                        >
+                          <Select
+                            options={[
+                              { value: "utility", label: "水电费" },
+                              { value: "property", label: "物业费" },
+                              { value: "other", label: "其他" },
+                            ]}
+                          />
+                        </Form.Item>
+                      ),
+                    },
+                    {
+                      title: "名称",
+                      render: (_, r) => (
+                        <Form.Item
+                          name={[r.field.name, "name"]}
+                          rules={[{ required: true, message: "请输入" }]}
+                          style={{ marginBottom: 0 }}
+                        >
+                          <Input placeholder="如：电费 2025-03" />
+                        </Form.Item>
+                      ),
+                    },
+                    {
+                      title: "金额（元）",
+                      width: 140,
+                      render: (_, r) => (
+                        <Form.Item
+                          name={[r.field.name, "amount"]}
+                          rules={[{ required: true, message: "请输入" }]}
+                          style={{ marginBottom: 0 }}
+                        >
+                          <InputNumber min={0.01} precision={2} style={{ width: "100%" }} />
+                        </Form.Item>
+                      ),
+                    },
+                    {
+                      title: "应付日",
+                      width: 150,
+                      render: (_, r) => (
+                        <Form.Item
+                          name={[r.field.name, "due_date"]}
+                          rules={[{ required: true, message: "请选择" }]}
+                          style={{ marginBottom: 0 }}
+                        >
+                          <DatePicker style={{ width: "100%" }} />
+                        </Form.Item>
+                      ),
+                    },
+                    {
+                      title: "操作",
+                      width: 80,
+                      render: (_, r) => (
+                        <Button type="link" danger onClick={() => remove(r.field.name)}>
+                          删除
+                        </Button>
+                      ),
+                    },
+                  ]}
+                />
+                <Button
+                  type="dashed"
+                  onClick={() => add({ category: "utility", name: "", amount: null, due_date: null })}
+                  block
+                  style={{ marginTop: 8 }}
+                >
+                  添加费用项目
+                </Button>
+              </>
+            )}
+          </Form.List>
 
           <Space style={{ marginTop: 24 }} wrap>
             <Button type="primary" onClick={handleCalculate} loading={loading}>
@@ -299,30 +438,7 @@ export default function RentalPanel() {
                 }
               />
             ) : null}
-            {feeSubtotals ? (
-              <Card size="small" title="费用类目小计" style={{ background: BG }}>
-                {feeSubtotalOrder
-                  .filter((cat) => feeSubtotals[cat] !== undefined)
-                  .map((cat) => (
-                    <div key={cat} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0" }}>
-                      <Text>{cat}</Text>
-                      <Text strong>{feeSubtotals[cat]}</Text>
-                    </div>
-                  ))}
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    padding: "8px 0 0",
-                    borderTop: "1px solid #e8e8e8",
-                    marginTop: 4,
-                  }}
-                >
-                  <Text strong>合计</Text>
-                  <Text strong style={{ fontSize: 16 }}>{sumLineAmounts(result.lines)}</Text>
-                </div>
-              </Card>
-            ) : null}
+            {result.rental_summary ? renderSummaryCard(result.rental_summary) : null}
             <Table columns={lineColumns} dataSource={tableData} scroll={{ x: 1000 }} pagination={false} size="small" />
           </Space>
         </Card>
