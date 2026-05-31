@@ -188,8 +188,10 @@ def test_rental_api_lines_distinguishable_by_fee_category():
         "contract_termination_date": "2025-03-01",
         "actual_vacate_date": "2025-03-15",
         "filing_date": "2025-04-01",
-        "monthly_property_management_fee": "200.00",
-        "monthly_utility_fee": "100.00",
+        "extra_fee_items": [
+            {"category": "property", "name": "物业费", "amount": "200.00", "due_date": "2025-01-26"},
+            {"category": "utility", "name": "水电费", "amount": "100.00", "due_date": "2025-01-26"},
+        ],
     }
     r = c.post("/api/rental/calculate", json=body)
     assert r.status_code == 200
@@ -231,8 +233,8 @@ def test_no_agreed_rate_without_due_date_rejected():
     assert any("due_date" in d.get("msg", "") for d in detail)
 
 
-def test_rental_no_vacate_date_and_no_filing_date_rejected():
-    """房屋租赁无 actual_vacate_date 且无 filing_date 应返回 422。"""
+def test_rental_filing_date_required():
+    """filing_date 为必填项，缺失时返回 422。"""
     c = _client()
     body = {
         "monthly_rent": "3000.00",
@@ -240,10 +242,7 @@ def test_rental_no_vacate_date_and_no_filing_date_rejected():
         "arrears_period_end": "2025-01-31",
         "rent_due_day_of_month": 26,
         "contract_termination_date": "2025-03-01",
-        "actual_vacate_date": None,
-        "filing_date": None,
+        "actual_vacate_date": "2025-03-15",
     }
     r = c.post("/api/rental/calculate", json=body)
     assert r.status_code == 422, f"expected 422, got {r.status_code}: {r.json()}"
-    detail = r.json()["detail"]
-    assert any("起诉日" in d.get("msg", "") or "搬离" in d.get("msg", "") for d in detail)

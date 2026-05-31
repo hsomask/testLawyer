@@ -26,6 +26,20 @@ export type ApiResult = {
   interest_subtotal?: string | null;
   remaining_principal?: string | null;
   total_principal_and_interest?: string | null;
+  /** 房屋租赁结构化汇总；民间借贷为 null */
+  rental_summary?: RentalSummary | null;
+};
+
+export type RentalSummary = {
+  rent_receivable_subtotal: string;
+  paid_rent_amount: string;
+  arrears_principal_subtotal: string;
+  rent_late_fee_subtotal: string;
+  utility_late_fee_subtotal: string;
+  property_late_fee_subtotal: string;
+  other_late_fee_subtotal: string;
+  occupancy_fee_subtotal: string;
+  grand_total: string;
 };
 
 export function formatApiError(data: unknown): string {

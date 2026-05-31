@@ -132,6 +132,8 @@ def test_rental_excel_has_messages_in_audit() -> None:
 
 def test_rental_detail_lines_distinguishable_by_fee_category() -> None:
     """房屋租赁明细行可按 fee_category 区分不同费用类目。"""
+    from legal_calc.rental.models import RentalExtraFeeItem
+
     req = RentalRequest(
         monthly_rent=Decimal("3000.00"),
         arrears_period_start=date(2025, 1, 1),
@@ -140,13 +142,108 @@ def test_rental_detail_lines_distinguishable_by_fee_category() -> None:
         contract_termination_date=date(2025, 3, 1),
         actual_vacate_date=date(2025, 3, 15),
         filing_date=date(2025, 4, 1),
-        monthly_property_management_fee=Decimal("200.00"),
-        monthly_utility_fee=Decimal("100.00"),
+        extra_fee_items=[
+            RentalExtraFeeItem(
+                category="property", name="物业费", amount=Decimal("200"), due_date=date(2025, 1, 26)
+            ),
+            RentalExtraFeeItem(
+                category="utility", name="水电费", amount=Decimal("100"), due_date=date(2025, 1, 26)
+            ),
+        ],
     )
     result = calculate_rental(req)
     categories = {ln.fee_category for ln in result.lines}
     assert "租金滞纳金" in categories, f"应包含租金滞纳金，实际类目: {categories}"
     assert "房屋占用费" in categories, f"应包含房屋占用费，实际类目: {categories}"
-    # 物业费和水电费滞纳金可能为 0，但至少 fee_category 应出现
     assert "物业费滞纳金" in categories, f"应包含物业费滞纳金，实际类目: {categories}"
     assert "水电费滞纳金" in categories, f"应包含水电费滞纳金，实际类目: {categories}"
+
+
+_RENTAL_SUMMARY_LABELS = [
+    "【应收租金小计】",
+    "【已支付租金合计】",
+    "【欠租本金小计】",
+    "【租金滞纳金小计】",
+    "【水电费滞纳金小计】",
+    "【物业费滞纳金小计】",
+    "【其他费用滞纳金小计】",
+    "【房屋占用费小计】",
+    "【最终总计】",
+]
+
+
+def test_rental_excel_detail_has_summary_rows() -> None:
+    """房屋租赁 Excel 计算明细底部存在所有汇总行。"""
+    req = _make_req()
+    result = calculate_rental(req)
+    bio = export_rental_workbook(req, result)
+    bio.seek(0)
+    wb = openpyxl.load_workbook(bio)
+    ws = wb["计算明细"]
+    col_a = [ws.cell(row=r, column=1).value for r in range(1, ws.max_row + 1)]
+    for label in _RENTAL_SUMMARY_LABELS:
+        assert label in col_a, f"租赁 Excel 明细缺少汇总行: {label}"
+
+
+def test_rental_excel_audit_has_rental_summary() -> None:
+    """房屋租赁审计信息页包含 rental_summary JSON。"""
+    req = _make_req()
+    result = calculate_rental(req)
+    bio = export_rental_workbook(req, result)
+    bio.seek(0)
+    wb = openpyxl.load_workbook(bio)
+    audit = wb["审计信息"]
+    labels = [audit.cell(row=r, column=1).value for r in range(2, audit.max_row + 1)]
+    assert "rental_summary" in labels, "审计信息缺少 rental_summary"
+
+
+def test_rental_excel_grand_total_matches_rental_summary() -> None:
+    """Excel 中的【最终总计】等于 rental_summary.grand_total。"""
+    req = _make_req()
+    result = calculate_rental(req)
+    assert result.rental_summary is not None
+    bio = export_rental_workbook(req, result)
+    bio.seek(0)
+    wb = openpyxl.load_workbook(bio)
+    ws = wb["计算明细"]
+    found = None
+    for row in range(1, ws.max_row + 1):
+        if ws.cell(row=row, column=1).value == "【最终总计】":
+            found = ws.cell(row=row, column=7).value
+            break
+    assert found is not None, "未找到【最终总计】行"
+    assert Decimal(str(found)) == result.rental_summary.grand_total, (
+        f"Excel 最终总计不一致: {found} != {result.rental_summary.grand_total}"
+    )
+
+
+def test_rental_excel_audit_has_rental_grand_total() -> None:
+    """房屋租赁审计信息页包含 rental_grand_total 字段。"""
+    req = _make_req()
+    result = calculate_rental(req)
+    bio = export_rental_workbook(req, result)
+    bio.seek(0)
+    wb = openpyxl.load_workbook(bio)
+    audit = wb["审计信息"]
+    labels = [audit.cell(row=r, column=1).value for r in range(2, audit.max_row + 1)]
+    assert "rental_grand_total" in labels, "审计信息缺少 rental_grand_total"
+
+
+def test_rental_excel_grand_total_differs_from_line_amount_sum_when_paid() -> None:
+    """有 paid_rent_amount 时，grand_total 与 line_amount_sum 不一致（明细行不含扣减）。"""
+    req = RentalRequest(
+        monthly_rent=Decimal("3000.00"),
+        arrears_period_start=date(2025, 1, 1),
+        arrears_period_end=date(2025, 1, 31),
+        rent_due_day_of_month=26,
+        contract_termination_date=date(2025, 3, 1),
+        actual_vacate_date=date(2025, 3, 15),
+        filing_date=date(2025, 4, 1),
+        paid_rent_amount=Decimal("1000.00"),
+    )
+    result = calculate_rental(req)
+    assert result.rental_summary is not None
+    line_sum = result.line_amount_sum()
+    grand = result.rental_summary.grand_total
+    # line_amount_sum > grand_total（因为 line_amount_sum 含完整的应收租金）
+    assert line_sum > grand, f"line_amount_sum={line_sum} 应大于 grand_total={grand}"

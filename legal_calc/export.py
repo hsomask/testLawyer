@@ -170,6 +170,27 @@ def _append_private_lending_detail_summary(ws, result: CalculationResult) -> Non
     )
 
 
+def _append_rental_detail_summary(ws, result: CalculationResult) -> None:
+    """房屋租赁：明细表底部追加汇总区（欠租本金、各滞纳金、占用费、最终总计）。"""
+    rs = result.rental_summary
+    if rs is None:
+        return
+    ws.append([])
+    summary_rows = [
+        ("【应收租金小计】", rs.rent_receivable_subtotal),
+        ("【已支付租金合计】", rs.paid_rent_amount),
+        ("【欠租本金小计】", rs.arrears_principal_subtotal),
+        ("【租金滞纳金小计】", rs.rent_late_fee_subtotal),
+        ("【水电费滞纳金小计】", rs.utility_late_fee_subtotal),
+        ("【物业费滞纳金小计】", rs.property_late_fee_subtotal),
+        ("【其他费用滞纳金小计】", rs.other_late_fee_subtotal),
+        ("【房屋占用费小计】", rs.occupancy_fee_subtotal),
+        ("【最终总计】", rs.grand_total),
+    ]
+    for label, value in summary_rows:
+        ws.append([label, "", "", "", "", "", value])
+
+
 def _fill_audit(
     ws,
     *,
@@ -194,6 +215,20 @@ def _fill_audit(
         ws.append(["interest_subtotal", str(result.interest_subtotal)])
         ws.append(["remaining_principal", str(result.remaining_principal)])
         ws.append(["total_principal_and_interest", str(result.total_principal_and_interest)])
+    if result.rental_summary is not None:
+        ws.append([])
+        ws.append(
+            [
+                "rental_grand_total",
+                str(result.rental_summary.grand_total),
+            ]
+        )
+        ws.append(
+            [
+                "rental_summary",
+                result.rental_summary.model_dump_json(indent=2),
+            ]
+        )
 
 
 def write_report_workbook(
@@ -204,6 +239,7 @@ def write_report_workbook(
     lpr_raw_snapshot: str | None = None,
     lpr_file_path: Path | None = None,
     include_private_lending_totals: bool = False,
+    include_rental_totals: bool = False,
 ) -> Path | BytesIO:
     """
     生成 xlsx：Sheet「计算明细」+「审计信息」。
@@ -220,6 +256,8 @@ def write_report_workbook(
     _fill_detail(ws_detail, result.lines)
     if include_private_lending_totals:
         _append_private_lending_detail_summary(ws_detail, result)
+    if include_rental_totals:
+        _append_rental_detail_summary(ws_detail, result)
     _style_detail_sheet(ws_detail)
 
     ws_audit = wb.create_sheet("审计信息", 1)
@@ -246,8 +284,10 @@ write_workbook = write_report_workbook
 
 
 def export_rental_workbook(req: RentalRequest, result: CalculationResult) -> BytesIO:
-    """房屋租赁计算书（Excel + 审计页，含请求快照与 LPR JSON）。"""
-    out = write_report_workbook(result, None, input_snapshot=req, include_private_lending_totals=False)
+    """房屋租赁计算书（Excel + 审计页，含请求快照、LPR JSON、汇总区、rental_summary）。"""
+    out = write_report_workbook(
+        result, None, input_snapshot=req, include_private_lending_totals=False, include_rental_totals=True,
+    )
     assert isinstance(out, BytesIO)
     return out
 

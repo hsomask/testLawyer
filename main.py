@@ -144,6 +144,14 @@ def _log_result(tag: str, request: Request, result: CalculationResult) -> None:
             f" remaining_principal={result.remaining_principal}"
             f" total_pi={result.total_principal_and_interest}"
         )
+    if result.rental_summary is not None:
+        rs = result.rental_summary
+        extra = (
+            f" arrears_principal={rs.arrears_principal_subtotal}"
+            f" rent_late={rs.rent_late_fee_subtotal}"
+            f" occup={rs.occupancy_fee_subtotal}"
+            f" grand_total={rs.grand_total}"
+        )
     _LOG.info(
         "[%s] %s ok=%s rule_version=%s lines=%d amount_sum=%s%s",
         _rid(request),
