@@ -50,11 +50,12 @@ def test_lease_caps_month_range_before_filing() -> None:
     out = calculate_rental(req)
     assert out.ok
     late = [ln for ln in out.lines if ln.fee_category == "租金滞纳金"]
-    assert not any("2025年01月" in ln.stage_description for ln in late)
-    assert not any("2025年02月" in ln.stage_description for ln in late)
-    assert any("2025年03月" in ln.stage_description for ln in late)
-    assert any("2025年04月" in ln.stage_description for ln in late)
-    assert not any("2025年05月" in ln.stage_description for ln in late)
+    # 只含 3、4 月义务，不应出现早于 3/27 的区间
+    assert all(ln.period_start >= date(2025, 3, 27) for ln in late)
+    # 至少应有 3/27 起的一段和 4/27 起的一段
+    starts = {ln.period_start for ln in late}
+    assert date(2025, 3, 27) in starts
+    assert date(2025, 4, 27) in starts
 
 
 def test_occupancy_no_fee_when_vacate_before_start() -> None:
@@ -595,7 +596,7 @@ class _FakeLpr:
 
 
 def test_rent_late_fee_same_lpr_merged_to_one_line() -> None:
-    """同一应付月、同 LPR 数值，应合并为一条租金滞纳金。"""
+    """同 LPR 且仅一个月租金义务，应合并为一条租金滞纳金。"""
     out = calculate_rental(
         RentalRequest(
             monthly_rent=Decimal("3000"),
@@ -605,22 +606,21 @@ def test_rent_late_fee_same_lpr_merged_to_one_line() -> None:
             contract_termination_date=date(2025, 4, 1),
             actual_vacate_date=None,
             filing_date=date(2025, 4, 1),
+            lease_start=date(2025, 1, 1),
+            lease_end=date(2025, 1, 31),
         )
     )
-    jan_lines = [
-        ln for ln in out.lines
-        if ln.fee_category == "租金滞纳金" and "2025年01月" in ln.stage_description
-    ]
-    assert len(jan_lines) == 1, f"expected 1, got {len(jan_lines)}"
-    assert jan_lines[0].period_start == date(2025, 1, 21)
-    assert jan_lines[0].period_end == date(2025, 4, 1)
-    assert jan_lines[0].day_count == 71
+    rent_lines = [ln for ln in out.lines if ln.fee_category == "租金滞纳金"]
+    assert len(rent_lines) == 1, f"expected 1, got {len(rent_lines)}"
+    assert rent_lines[0].period_start == date(2025, 1, 21)
+    assert rent_lines[0].period_end == date(2025, 4, 1)
+    assert rent_lines[0].day_count == 71
     expected = quantize_money(Decimal("3000") * Decimal("0.031") * Decimal("71") / Decimal("365"))
-    assert jan_lines[0].amount == expected, f"{jan_lines[0].amount} != {expected}"
+    assert rent_lines[0].amount == expected, f"{rent_lines[0].amount} != {expected}"
 
 
 def test_rent_late_fee_lpr_change_splits() -> None:
-    """LPR 数值变化时拆分：1/21~2/19 (0.031) + 2/20~4/1 (0.030)。"""
+    """仅一个月租金义务 + LPR 变化：拆为 2 段，累计基数均为 3000。"""
     out = calculate_rental(
         RentalRequest(
             monthly_rent=Decimal("3000"),
@@ -630,24 +630,23 @@ def test_rent_late_fee_lpr_change_splits() -> None:
             contract_termination_date=date(2025, 4, 1),
             actual_vacate_date=None,
             filing_date=date(2025, 4, 1),
+            lease_start=date(2025, 1, 1),
+            lease_end=date(2025, 1, 31),
         ),
         lpr=_FakeLpr(),
     )
-    jan_lines = [
-        ln for ln in out.lines
-        if ln.fee_category == "租金滞纳金" and "2025年01月" in ln.stage_description
-    ]
-    assert len(jan_lines) == 2, f"expected 2, got {len(jan_lines)}"
+    rent_lines = [ln for ln in out.lines if ln.fee_category == "租金滞纳金"]
+    assert len(rent_lines) == 2, f"expected 2, got {len(rent_lines)}"
 
-    assert jan_lines[0].period_start == date(2025, 1, 21)
-    assert jan_lines[0].period_end == date(2025, 2, 19)
-    assert jan_lines[0].day_count == 30
-    assert "0.031" in jan_lines[0].rate_standard
+    assert rent_lines[0].period_start == date(2025, 1, 21)
+    assert rent_lines[0].period_end == date(2025, 2, 19)
+    assert rent_lines[0].day_count == 30
+    assert "0.031" in rent_lines[0].rate_standard
 
-    assert jan_lines[1].period_start == date(2025, 2, 20)
-    assert jan_lines[1].period_end == date(2025, 4, 1)
-    assert jan_lines[1].day_count == 41
-    assert "0.030" in jan_lines[1].rate_standard
+    assert rent_lines[1].period_start == date(2025, 2, 20)
+    assert rent_lines[1].period_end == date(2025, 4, 1)
+    assert rent_lines[1].day_count == 41
+    assert "0.030" in rent_lines[1].rate_standard
 
 
 def test_extra_fee_same_lpr_merged_to_one_line() -> None:
@@ -712,6 +711,123 @@ def test_extra_fee_lpr_change_splits() -> None:
     assert prop_lines[1].period_start == date(2025, 2, 20)
     assert prop_lines[1].period_end == date(2025, 4, 1)
     assert "0.030" in prop_lines[1].rate_standard
+
+
+# ── M2 累计基数时间轴测试 ─────────────────────────────────────────
+
+
+def test_rent_late_fee_uses_accumulated_base_timeline() -> None:
+    """租金滞纳金按累计基数时间轴：3000→6000→9000。"""
+    out = calculate_rental(
+        RentalRequest(
+            monthly_rent=Decimal("3000"),
+            arrears_period_start=date(2025, 1, 1),
+            arrears_period_end=date(2025, 3, 31),
+            rent_due_day_of_month=26,
+            contract_termination_date=date(2025, 4, 1),
+            actual_vacate_date=None,
+            filing_date=date(2025, 4, 1),
+            lease_start=date(2025, 1, 1),
+            lease_end=date(2025, 3, 31),
+        )
+    )
+    rent_lines = [ln for ln in out.lines if ln.fee_category == "租金滞纳金"]
+    assert len(rent_lines) == 3, f"expected 3, got {len(rent_lines)}"
+
+    # 第一段：1/27~2/26，基数 3000
+    assert rent_lines[0].period_start == date(2025, 1, 27)
+    assert rent_lines[0].period_end == date(2025, 2, 26)
+    assert rent_lines[0].principal_base == Decimal("3000.00")
+    assert rent_lines[0].day_count == 31
+    e0 = quantize_money(Decimal("3000") * Decimal("0.031") * Decimal("31") / Decimal("365"))
+    assert rent_lines[0].amount == e0
+
+    # 第二段：2/27~3/26，基数 6000
+    assert rent_lines[1].period_start == date(2025, 2, 27)
+    assert rent_lines[1].period_end == date(2025, 3, 26)
+    assert rent_lines[1].principal_base == Decimal("6000.00")
+    assert rent_lines[1].day_count == 28
+    e1 = quantize_money(Decimal("6000") * Decimal("0.031") * Decimal("28") / Decimal("365"))
+    assert rent_lines[1].amount == e1
+
+    # 第三段：3/27~4/1，基数 9000
+    assert rent_lines[2].period_start == date(2025, 3, 27)
+    assert rent_lines[2].period_end == date(2025, 4, 1)
+    assert rent_lines[2].principal_base == Decimal("9000.00")
+    assert rent_lines[2].day_count == 6
+    e2 = quantize_money(Decimal("9000") * Decimal("0.031") * Decimal("6") / Decimal("365"))
+    assert rent_lines[2].amount == e2
+
+
+def test_rent_late_fee_lines_do_not_overlap() -> None:
+    """租金滞纳金明细不允许重叠区间。"""
+    out = calculate_rental(
+        RentalRequest(
+            monthly_rent=Decimal("3000"),
+            arrears_period_start=date(2025, 1, 1),
+            arrears_period_end=date(2025, 3, 31),
+            rent_due_day_of_month=26,
+            contract_termination_date=date(2025, 4, 1),
+            actual_vacate_date=None,
+            filing_date=date(2025, 4, 1),
+            lease_start=date(2025, 1, 1),
+            lease_end=date(2025, 3, 31),
+        )
+    )
+    rent_lines = sorted(
+        [ln for ln in out.lines if ln.fee_category == "租金滞纳金"],
+        key=lambda ln: ln.period_start,
+    )
+    assert len(rent_lines) >= 2
+    for i in range(len(rent_lines) - 1):
+        assert rent_lines[i].period_end < rent_lines[i + 1].period_start, (
+            f"重叠: [{rent_lines[i].period_start}, {rent_lines[i].period_end}]"
+            f" vs [{rent_lines[i + 1].period_start}, {rent_lines[i + 1].period_end}]"
+        )
+
+
+def test_rent_late_fee_lpr_and_base_both_change() -> None:
+    """LPR 和累计基数同时变化：应切 4 段。"""
+    out = calculate_rental(
+        RentalRequest(
+            monthly_rent=Decimal("3000"),
+            arrears_period_start=date(2025, 1, 1),
+            arrears_period_end=date(2025, 3, 31),
+            rent_due_day_of_month=26,
+            contract_termination_date=date(2025, 4, 1),
+            actual_vacate_date=None,
+            filing_date=date(2025, 4, 1),
+            lease_start=date(2025, 1, 1),
+            lease_end=date(2025, 3, 31),
+        ),
+        lpr=_FakeLpr(),
+    )
+    rent_lines = [ln for ln in out.lines if ln.fee_category == "租金滞纳金"]
+    assert len(rent_lines) == 4, f"expected 4, got {len(rent_lines)}"
+
+    # 1/27~2/19，基数 3000，LPR 0.031
+    assert rent_lines[0].period_start == date(2025, 1, 27)
+    assert rent_lines[0].period_end == date(2025, 2, 19)
+    assert rent_lines[0].principal_base == Decimal("3000.00")
+    assert "0.031" in rent_lines[0].rate_standard
+
+    # 2/20~2/26，基数 3000，LPR 0.030
+    assert rent_lines[1].period_start == date(2025, 2, 20)
+    assert rent_lines[1].period_end == date(2025, 2, 26)
+    assert rent_lines[1].principal_base == Decimal("3000.00")
+    assert "0.030" in rent_lines[1].rate_standard
+
+    # 2/27~3/26，基数 6000，LPR 0.030
+    assert rent_lines[2].period_start == date(2025, 2, 27)
+    assert rent_lines[2].period_end == date(2025, 3, 26)
+    assert rent_lines[2].principal_base == Decimal("6000.00")
+    assert "0.030" in rent_lines[2].rate_standard
+
+    # 3/27~4/1，基数 9000，LPR 0.030
+    assert rent_lines[3].period_start == date(2025, 3, 27)
+    assert rent_lines[3].period_end == date(2025, 4, 1)
+    assert rent_lines[3].principal_base == Decimal("9000.00")
+    assert "0.030" in rent_lines[3].rate_standard
 
 
 # ── 导入 quantize_money 供测试用 ──────────────────────────────────

@@ -1,9 +1,12 @@
 """
 房屋租赁（PRD §2）：租金滞纳金 + 额外费用滞纳金 + 占用费 + 欠租本金。
 
-- 滞纳金按 LPR 发布日生成候选区间，合并相邻同 LPR 数值区间后输出。
-- 占用费按自然月拆分：月租金 / 当月自然日天数 × 当月占用天数 × 2。
-- 欠租本金按自然月拆分。
+- 租金滞纳金：按时间轴累计欠租基数计算，以本金基数变化日（各月违约开始日）
+  和 LPR 数值变化日切段；相邻同 LPR 且同基数合并。
+- 额外费用滞纳金：按单项费用计算，以 LPR 数值变化日切段，相邻同 LPR 合并；
+  不同费用项目之间不合并。
+- 占用费：按自然月拆分：月租金 / 当月自然日天数 × 当月占用天数 × 2。
+- 欠租本金：按自然月拆分。
 """
 
 from __future__ import annotations
@@ -31,11 +34,21 @@ _FEE_CAT_ARREARS = "欠租本金"
 
 @dataclass
 class _LateFeeSegment:
-    """一个滞纳金候选分段。"""
+    """一个滞纳金候选分段（额外费用用）。"""
     period_start: date
     period_end: date   # inclusive
     day_count: int
     lpr: Decimal
+
+
+@dataclass
+class _RentLateFeeSegment:
+    """租金滞纳金分段（含累计基数）。"""
+    period_start: date
+    period_end: date   # inclusive
+    day_count: int
+    lpr: Decimal
+    active_base: Decimal
 
 
 def _days_in_month(y: int, m: int) -> int:
@@ -145,6 +158,33 @@ def _lpr_segments_merged_by_value(
     return _merge_adjacent_same_lpr(segments)
 
 
+def _merge_adjacent_same_lpr_and_base(
+    segments: list[_RentLateFeeSegment],
+) -> list[_RentLateFeeSegment]:
+    """合并相邻且 LPR 相同且累计基数相同的分段。"""
+    if not segments:
+        return []
+    merged: list[_RentLateFeeSegment] = []
+    for seg in segments:
+        if (
+            merged
+            and merged[-1].lpr == seg.lpr
+            and merged[-1].active_base == seg.active_base
+            and merged[-1].period_end + timedelta(days=1) == seg.period_start
+        ):
+            prev = merged[-1]
+            merged[-1] = _RentLateFeeSegment(
+                period_start=prev.period_start,
+                period_end=seg.period_end,
+                day_count=prev.day_count + seg.day_count,
+                lpr=prev.lpr,
+                active_base=prev.active_base,
+            )
+        else:
+            merged.append(seg)
+    return merged
+
+
 def _arrears_principal_lines(req: RentalRequest, lines: list[ReportLineItem]) -> Decimal:
     """
     欠租本金：按自然月拆分。
@@ -187,40 +227,91 @@ def _rent_late_fee_lines(
     lines: list[ReportLineItem],
 ) -> Decimal:
     """
-    租金滞纳金：每个应付月内的滞纳期间按 LPR 变化分段，合并相邻同值区间。
-    返回 rent_late_fee_subtotal（已舍入行金额之和）。
+    租金滞纳金：按时间轴累计欠租基数计算。
+
+    1. 生成各应付月的租金义务（accrual_start = due_date + 1）；
+    2. 切点 = 各义务 accrual_start + LPR 实际变化日 + filing_date+1；
+    3. 每段累计基数 = 该段开始时已逾期的月租金之和；
+    4. 合并相邻同 LPR 且同累积基数的分段。
     """
+    filing_date = late_hi_excl - timedelta(days=1)
     range_lo, range_hi = _late_fee_month_range(req)
     months = _months_in_range_inclusive(range_lo, range_hi)
-    filing_date = late_hi_excl - timedelta(days=1)
-    total = Decimal("0")
+
+    # Step 1: 生成租金应付义务
+    obligations: list[tuple[str, date, date]] = []  # (label, due_date, accrual_start)
     for y, m in months:
         due = due_date_by_day_of_month(y, m, req.rent_due_day_of_month)
-        accrual_start = due + timedelta(days=1)
-        if accrual_start >= late_hi_excl:
-            continue
+        acc_start = due + timedelta(days=1)
+        if acc_start < late_hi_excl:
+            obligations.append((f"{y}年{m:02d}月租金", due, acc_start))
 
-        segments = _lpr_segments_merged_by_value(accrual_start, filing_date, lpr)
-        for seg in segments:
-            raw = req.monthly_rent * seg.lpr * Decimal(seg.day_count) / Decimal("365")
-            amt = quantize_money(raw)
-            total += amt
-            lines.append(
-                ReportLineItem(
-                    fee_category=_FEE_CAT_RENT,
-                    stage_description=(
-                        f"{y}年{m:02d}月期｜应付日 {due.isoformat()}；"
-                        f"违约开始 {accrual_start.isoformat()}；"
-                        f"LPR={seg.lpr}（本案全程不变）"
-                    ),
-                    principal_base=quantize_money(req.monthly_rent),
-                    rate_standard=f"年化小数 {seg.lpr}",
-                    period_start=seg.period_start,
-                    period_end=seg.period_end,
-                    day_count=seg.day_count,
-                    amount=amt,
-                )
+    if not obligations:
+        return Decimal("0")
+
+    # Step 2: 生成切点
+    cuts: set[date] = set()
+    cuts.add(late_hi_excl)
+    for _, _, acc_start in obligations:
+        cuts.add(acc_start)
+
+    # 仅在 LPR 数值实际变化时才加入切点
+    first_acc = obligations[0][2]
+    pub_dates = lpr.publication_dates_in_open_interval(first_acc, late_hi_excl)
+    for d in sorted(pub_dates):
+        prev_lpr = lpr.get_annual_lpr(d - timedelta(days=1))
+        curr_lpr = lpr.get_annual_lpr(d)
+        if prev_lpr != curr_lpr:
+            cuts.add(d)
+
+    cut_list = sorted(cuts)
+
+    # Step 3: 按切点生成分段（累计基数）
+    segments: list[_RentLateFeeSegment] = []
+    for i in range(len(cut_list) - 1):
+        seg_start = cut_list[i]
+        seg_end = cut_list[i + 1] - timedelta(days=1)
+        days = (cut_list[i + 1] - cut_list[i]).days
+        if days <= 0:
+            continue
+        active_base = sum(
+            req.monthly_rent
+            for _, _, acc_start in obligations
+            if acc_start <= seg_start
+        )
+        if active_base <= 0:
+            continue
+        lpr_val = lpr.get_annual_lpr(seg_start)
+        segments.append(
+            _RentLateFeeSegment(seg_start, seg_end, days, lpr_val, active_base)
+        )
+
+    # Step 4: 合并相邻同 LPR 且同累积基数的分段
+    merged = _merge_adjacent_same_lpr_and_base(segments)
+
+    # Step 5: 生成明细行
+    total = Decimal("0")
+    for seg in merged:
+        raw = seg.active_base * seg.lpr * Decimal(seg.day_count) / Decimal("365")
+        amt = quantize_money(raw)
+        total += amt
+        months_count = int(seg.active_base / req.monthly_rent)
+        lines.append(
+            ReportLineItem(
+                fee_category=_FEE_CAT_RENT,
+                stage_description=(
+                    f"累计逾期租金 {seg.active_base}｜"
+                    f"截至本段起始日已逾期 {months_count} 期月租｜"
+                    f"LPR={seg.lpr}"
+                ),
+                principal_base=quantize_money(seg.active_base),
+                rate_standard=f"年化小数 {seg.lpr}",
+                period_start=seg.period_start,
+                period_end=seg.period_end,
+                day_count=seg.day_count,
+                amount=amt,
             )
+        )
     return total
 
 
