@@ -1,7 +1,7 @@
 """
 房屋租赁（PRD §2）：租金滞纳金 + 额外费用滞纳金 + 占用费 + 欠租本金。
 
-- 滞纳金不再按 LPR 发布日分段，每月/每项取违约开始日固定 LPR。
+- 滞纳金按 LPR 发布日生成候选区间，合并相邻同 LPR 数值区间后输出。
 - 占用费按自然月拆分：月租金 / 当月自然日天数 × 当月占用天数 × 2。
 - 欠租本金按自然月拆分。
 """
@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import calendar
 from collections import defaultdict
+from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import Decimal
 
@@ -19,13 +20,22 @@ from legal_calc.rental.models import RentalExtraFeeItem, RentalRequest, due_date
 from legal_calc.report_models import CalculationResult, RentalSummary, ReportLineItem
 from legal_calc.version import RULE_VERSION
 
-# 费用类目 → RentalSummary 字段映射
+# 费用类目
 _FEE_CAT_UTILITY = "水电费滞纳金"
 _FEE_CAT_PROPERTY = "物业费滞纳金"
 _FEE_CAT_OTHER = "其他费用滞纳金"
 _FEE_CAT_RENT = "租金滞纳金"
 _FEE_CAT_OCCUPANCY = "房屋占用费"
 _FEE_CAT_ARREARS = "欠租本金"
+
+
+@dataclass
+class _LateFeeSegment:
+    """一个滞纳金候选分段。"""
+    period_start: date
+    period_end: date   # inclusive
+    day_count: int
+    lpr: Decimal
 
 
 def _days_in_month(y: int, m: int) -> int:
@@ -81,9 +91,58 @@ def _late_fee_month_range(req: RentalRequest) -> tuple[date, date]:
 
 
 
-def _fixed_lpr(as_of: date, lpr: JsonFileLprProvider) -> Decimal:
-    """取 as_of 当日或之前最近一次已公布的一年期 LPR。"""
-    return lpr.get_annual_lpr(as_of)
+def _merge_adjacent_same_lpr(segments: list[_LateFeeSegment]) -> list[_LateFeeSegment]:
+    """合并相邻且 LPR 数值相同的分段。"""
+    if not segments:
+        return []
+    merged: list[_LateFeeSegment] = []
+    for seg in segments:
+        if (
+            merged
+            and merged[-1].lpr == seg.lpr
+            and merged[-1].period_end + timedelta(days=1) == seg.period_start
+        ):
+            prev = merged[-1]
+            merged[-1] = _LateFeeSegment(
+                period_start=prev.period_start,
+                period_end=seg.period_end,
+                day_count=prev.day_count + seg.day_count,
+                lpr=prev.lpr,
+            )
+        else:
+            merged.append(seg)
+    return merged
+
+
+def _lpr_segments_merged_by_value(
+    start: date,
+    end_inclusive: date,
+    lpr_provider: JsonFileLprProvider,
+) -> list[_LateFeeSegment]:
+    """
+    在 [start, end_inclusive] 区间内按 LPR 发布日生成候选分段，
+    每段取起始日对应的 LPR，最后合并相邻同值分段。
+    """
+    hi_excl = end_inclusive + timedelta(days=1)
+    cuts = sorted(lpr_provider.publication_dates_in_open_interval(start, hi_excl))
+
+    # 生成候选分段
+    segments: list[_LateFeeSegment] = []
+    seg_start = start
+    for cut in cuts:
+        seg_end = cut - timedelta(days=1)
+        if seg_start <= seg_end:
+            days = (seg_end - seg_start).days + 1
+            apr = lpr_provider.get_annual_lpr(seg_start)
+            segments.append(_LateFeeSegment(seg_start, seg_end, days, apr))
+        seg_start = cut
+    # 末段
+    if seg_start <= end_inclusive:
+        days = (end_inclusive - seg_start).days + 1
+        apr = lpr_provider.get_annual_lpr(seg_start)
+        segments.append(_LateFeeSegment(seg_start, end_inclusive, days, apr))
+
+    return _merge_adjacent_same_lpr(segments)
 
 
 def _arrears_principal_lines(req: RentalRequest, lines: list[ReportLineItem]) -> Decimal:
@@ -128,43 +187,40 @@ def _rent_late_fee_lines(
     lines: list[ReportLineItem],
 ) -> Decimal:
     """
-    租金滞纳金：每个应付月一行。
-    取违约开始日（应交日次日）的固定 LPR，不按发布日分段。
+    租金滞纳金：每个应付月内的滞纳期间按 LPR 变化分段，合并相邻同值区间。
     返回 rent_late_fee_subtotal（已舍入行金额之和）。
     """
     range_lo, range_hi = _late_fee_month_range(req)
     months = _months_in_range_inclusive(range_lo, range_hi)
+    filing_date = late_hi_excl - timedelta(days=1)
     total = Decimal("0")
     for y, m in months:
         due = due_date_by_day_of_month(y, m, req.rent_due_day_of_month)
         accrual_start = due + timedelta(days=1)
         if accrual_start >= late_hi_excl:
             continue
-        days = (late_hi_excl - accrual_start).days
-        if days <= 0:
-            continue
-        fixed_apr = _fixed_lpr(accrual_start, lpr)
-        raw = req.monthly_rent * fixed_apr * Decimal(days) / Decimal("365")
-        amt = quantize_money(raw)
-        total += amt
-        pend = late_hi_excl - timedelta(days=1)
-        lines.append(
-            ReportLineItem(
-                fee_category=_FEE_CAT_RENT,
-                stage_description=(
-                    f"{y}年{m:02d}月期｜应付日 {due.isoformat()}；"
-                    f"违约开始 {accrual_start.isoformat()}；"
-                    f"固定 LPR 取值日 {accrual_start.isoformat()} 对应 {fixed_apr}；"
-                    f"计息 {accrual_start.isoformat()}～{pend.isoformat()}（{days} 日）"
-                ),
-                principal_base=quantize_money(req.monthly_rent),
-                rate_standard=f"年化小数 {fixed_apr}（固定，不分段）",
-                period_start=accrual_start,
-                period_end=pend,
-                day_count=days,
-                amount=amt,
+
+        segments = _lpr_segments_merged_by_value(accrual_start, filing_date, lpr)
+        for seg in segments:
+            raw = req.monthly_rent * seg.lpr * Decimal(seg.day_count) / Decimal("365")
+            amt = quantize_money(raw)
+            total += amt
+            lines.append(
+                ReportLineItem(
+                    fee_category=_FEE_CAT_RENT,
+                    stage_description=(
+                        f"{y}年{m:02d}月期｜应付日 {due.isoformat()}；"
+                        f"违约开始 {accrual_start.isoformat()}；"
+                        f"LPR={seg.lpr}（本案全程不变）"
+                    ),
+                    principal_base=quantize_money(req.monthly_rent),
+                    rate_standard=f"年化小数 {seg.lpr}",
+                    period_start=seg.period_start,
+                    period_end=seg.period_end,
+                    day_count=seg.day_count,
+                    amount=amt,
+                )
             )
-        )
     return total
 
 
@@ -176,8 +232,7 @@ def _extra_fee_late_lines(
     messages: list[str],
 ) -> tuple[Decimal, Decimal, Decimal]:
     """
-    额外费用滞纳金：每项一条。
-    取违约开始日（应付日次日）的固定 LPR，不按发布日分段。
+    额外费用滞纳金：每项单独计算，按 LPR 变化分段，合并相邻同值区间。
     due_date 晚于或等于起诉日时跳过并提示。
     返回 (utility_subtotal, property_subtotal, other_subtotal)。
     """
@@ -198,31 +253,28 @@ def _extra_fee_late_lines(
                 "无滞纳期间，跳过"
             )
             continue
-        days = (late_hi_excl - accrual_start).days
-        if days <= 0:
-            continue
-        fixed_apr = _fixed_lpr(accrual_start, lpr)
-        raw = item.amount * fixed_apr * Decimal(days) / Decimal("365")
-        amt = quantize_money(raw)
-        subtotals[item.category] += amt
-        pend = late_hi_excl - timedelta(days=1)
-        lines.append(
-            ReportLineItem(
-                fee_category=fee_cat,
-                stage_description=(
-                    f"{item.name}｜应付日 {item.due_date.isoformat()}；"
-                    f"违约开始 {accrual_start.isoformat()}；"
-                    f"固定 LPR 取值日 {accrual_start.isoformat()} 对应 {fixed_apr}；"
-                    f"计息 {accrual_start.isoformat()}～{pend.isoformat()}（{days} 日）"
-                ),
-                principal_base=quantize_money(item.amount),
-                rate_standard=f"年化小数 {fixed_apr}（固定，不分段）",
-                period_start=accrual_start,
-                period_end=pend,
-                day_count=days,
-                amount=amt,
+
+        segments = _lpr_segments_merged_by_value(accrual_start, filing_date, lpr)
+        for seg in segments:
+            raw = item.amount * seg.lpr * Decimal(seg.day_count) / Decimal("365")
+            amt = quantize_money(raw)
+            subtotals[item.category] += amt
+            lines.append(
+                ReportLineItem(
+                    fee_category=fee_cat,
+                    stage_description=(
+                        f"{item.name}｜应付日 {item.due_date.isoformat()}；"
+                        f"违约开始 {accrual_start.isoformat()}；"
+                        f"LPR={seg.lpr}（本案全程不变）"
+                    ),
+                    principal_base=quantize_money(item.amount),
+                    rate_standard=f"年化小数 {seg.lpr}",
+                    period_start=seg.period_start,
+                    period_end=seg.period_end,
+                    day_count=seg.day_count,
+                    amount=amt,
+                )
             )
-        )
     return (
         subtotals["utility"],
         subtotals["property"],
@@ -332,7 +384,7 @@ def calculate_rental(
 
     # --- 口径说明 ---
     assumptions_used = [
-        "滞纳金：不再按 LPR 发布日分段，每月/每项取违约开始日（应付日次日）的固定一年期 LPR",
+        "滞纳金：按 LPR 发布日生成候选区间，合并相邻同 LPR 数值区间；仅 LPR 数值变化时拆分",
         (
             f"滞纳金月份范围：{range_lo.isoformat()}～{range_hi.isoformat()}（含端月）；"
             "起点=租期起（若填）否则欠租统计起点；终点=min(租期止,起诉日)（若填租期止）否则起诉日"
@@ -362,7 +414,7 @@ def calculate_rental(
         if "other" in item_cats:
             cat_names.append("其他")
         assumptions_used.append(
-            f"额外费用（{', '.join(cat_names)}）：共 {len(extra_items)} 项，逐条取固定 LPR 不计分段"
+            f"额外费用（{', '.join(cat_names)}）：共 {len(extra_items)} 项，逐条按 LPR 变化分段并合并同值区间"
         )
 
     messages.append(f"应收租金小计: {rent_receivable}")

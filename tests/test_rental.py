@@ -336,7 +336,7 @@ def test_occupancy_no_longer_uses_30_day_formula() -> None:
 
 
 def test_rent_late_fee_no_lpr_segmentation() -> None:
-    """租金滞纳金不再按 LPR 发布日分段，每月只生成一条。"""
+    """同 LPR 数值不拆分：滞纳期间跨多个 LPR 发布日但数值相同，合并为一行。"""
     out = _rental(
         Decimal("3000"),
         arrears_period_start=date(2024, 10, 1),
@@ -346,18 +346,14 @@ def test_rent_late_fee_no_lpr_segmentation() -> None:
         filing_date=date(2025, 4, 1),
     )
     rent_lines = [ln for ln in out.lines if ln.fee_category == "租金滞纳金"]
-    assert len(rent_lines) == 6  # 10,11,12,1,2,3 = 6 个月，每月一条
-    # 检查所有行都不含 LPR 分段标识
+    # 10,11,12,1,2,3 = 6 个月，LPR=0.031 全程不变，每月一行
+    assert len(rent_lines) == 6
     for ln in rent_lines:
-        assert "固定，不分段" in ln.rate_standard or "固定" in ln.rate_standard
-        # 不应出现旧的分段描述
-        assert "计息区间" not in ln.stage_description.split("；")[-1] or "固定 LPR" in ln.stage_description
-        # 不应有多条 LPR 取值日
-        assert ln.stage_description.count("固定 LPR 取值日") == 1
+        assert "年化小数" in ln.rate_standard
 
 
 def test_rent_late_fee_fixed_lpr_across_months() -> None:
-    """跨月跨年不更新 LPR，各月取违约开始日对应的固定 LPR。"""
+    """LPR 变化时拆分，但同 LPR 区间合并：Aug/Sep 跨 LPR 变动点各拆 2 行。"""
     out = _rental(
         Decimal("5000"),
         arrears_period_start=date(2024, 8, 1),
@@ -367,10 +363,10 @@ def test_rent_late_fee_fixed_lpr_across_months() -> None:
         filing_date=date(2025, 4, 1),
     )
     rent = [ln for ln in out.lines if ln.fee_category == "租金滞纳金"]
-    assert len(rent) >= 8  # 8个月
-    # 各月 rate_standard 中 LPR 可能不同（取决于违约开始日），但各月只有一条
+    # 8个月：Aug/Sep 各 2（LPR 变动），Oct-Mar 各 1 = 10
+    assert len(rent) >= 8
     for ln in rent:
-        assert "不分段" in ln.rate_standard
+        assert "年化小数" in ln.rate_standard
 
 
 # ── 额外费用滞纳金 ────────────────────────────────────────────────
@@ -578,6 +574,144 @@ def test_extra_fee_due_date_after_filing_skipped() -> None:
     assert out.rental_summary.utility_late_fee_subtotal == Decimal("0")
     assert out.rental_summary.other_late_fee_subtotal == Decimal("0")
     assert any("跳过" in m for m in out.messages)
+
+
+# ── LPR 分段合并测试 ──────────────────────────────────────────────
+
+
+class _FakeLpr:
+    """Fake LPR provider：2/20 前 0.031，之后 0.030。"""
+
+    def get_annual_lpr(self, as_of: date) -> Decimal:
+        if as_of < date(2025, 2, 20):
+            return Decimal("0.031")
+        return Decimal("0.030")
+
+    def publication_dates_in_open_interval(self, lo: date, hi_excl: date) -> list[date]:
+        cut = date(2025, 2, 20)
+        if lo < cut < hi_excl:
+            return [cut]
+        return []
+
+
+def test_rent_late_fee_same_lpr_merged_to_one_line() -> None:
+    """同一应付月、同 LPR 数值，应合并为一条租金滞纳金。"""
+    out = calculate_rental(
+        RentalRequest(
+            monthly_rent=Decimal("3000"),
+            arrears_period_start=date(2025, 1, 1),
+            arrears_period_end=date(2025, 1, 31),
+            rent_due_day_of_month=20,
+            contract_termination_date=date(2025, 4, 1),
+            actual_vacate_date=None,
+            filing_date=date(2025, 4, 1),
+        )
+    )
+    jan_lines = [
+        ln for ln in out.lines
+        if ln.fee_category == "租金滞纳金" and "2025年01月" in ln.stage_description
+    ]
+    assert len(jan_lines) == 1, f"expected 1, got {len(jan_lines)}"
+    assert jan_lines[0].period_start == date(2025, 1, 21)
+    assert jan_lines[0].period_end == date(2025, 4, 1)
+    assert jan_lines[0].day_count == 71
+    expected = quantize_money(Decimal("3000") * Decimal("0.031") * Decimal("71") / Decimal("365"))
+    assert jan_lines[0].amount == expected, f"{jan_lines[0].amount} != {expected}"
+
+
+def test_rent_late_fee_lpr_change_splits() -> None:
+    """LPR 数值变化时拆分：1/21~2/19 (0.031) + 2/20~4/1 (0.030)。"""
+    out = calculate_rental(
+        RentalRequest(
+            monthly_rent=Decimal("3000"),
+            arrears_period_start=date(2025, 1, 1),
+            arrears_period_end=date(2025, 1, 31),
+            rent_due_day_of_month=20,
+            contract_termination_date=date(2025, 4, 1),
+            actual_vacate_date=None,
+            filing_date=date(2025, 4, 1),
+        ),
+        lpr=_FakeLpr(),
+    )
+    jan_lines = [
+        ln for ln in out.lines
+        if ln.fee_category == "租金滞纳金" and "2025年01月" in ln.stage_description
+    ]
+    assert len(jan_lines) == 2, f"expected 2, got {len(jan_lines)}"
+
+    assert jan_lines[0].period_start == date(2025, 1, 21)
+    assert jan_lines[0].period_end == date(2025, 2, 19)
+    assert jan_lines[0].day_count == 30
+    assert "0.031" in jan_lines[0].rate_standard
+
+    assert jan_lines[1].period_start == date(2025, 2, 20)
+    assert jan_lines[1].period_end == date(2025, 4, 1)
+    assert jan_lines[1].day_count == 41
+    assert "0.030" in jan_lines[1].rate_standard
+
+
+def test_extra_fee_same_lpr_merged_to_one_line() -> None:
+    """一条额外费用、同 LPR 数值，应合并为一条明细。"""
+    from legal_calc.rental.models import RentalExtraFeeItem
+
+    out = calculate_rental(
+        RentalRequest(
+            monthly_rent=Decimal("3000"),
+            arrears_period_start=date(2025, 1, 1),
+            arrears_period_end=date(2025, 1, 31),
+            rent_due_day_of_month=20,
+            contract_termination_date=date(2025, 4, 1),
+            actual_vacate_date=None,
+            filing_date=date(2025, 4, 1),
+            extra_fee_items=[
+                RentalExtraFeeItem(
+                    category="utility", name="电费 2025-01", amount=Decimal("500"),
+                    due_date=date(2025, 1, 20),
+                ),
+            ],
+        )
+    )
+    util_lines = [ln for ln in out.lines if ln.fee_category == "水电费滞纳金"]
+    assert len(util_lines) == 1, f"expected 1, got {len(util_lines)}"
+    assert util_lines[0].period_start == date(2025, 1, 21)
+    assert util_lines[0].period_end == date(2025, 4, 1)
+    assert util_lines[0].day_count == 71
+    expected = quantize_money(Decimal("500") * Decimal("0.031") * Decimal("71") / Decimal("365"))
+    assert util_lines[0].amount == expected, f"{util_lines[0].amount} != {expected}"
+
+
+def test_extra_fee_lpr_change_splits() -> None:
+    """额外费用 LPR 变化时拆分两条。"""
+    from legal_calc.rental.models import RentalExtraFeeItem
+
+    out = calculate_rental(
+        RentalRequest(
+            monthly_rent=Decimal("3000"),
+            arrears_period_start=date(2025, 1, 1),
+            arrears_period_end=date(2025, 1, 31),
+            rent_due_day_of_month=20,
+            contract_termination_date=date(2025, 4, 1),
+            actual_vacate_date=None,
+            filing_date=date(2025, 4, 1),
+            extra_fee_items=[
+                RentalExtraFeeItem(
+                    category="property", name="物业费 Q1", amount=Decimal("1200"),
+                    due_date=date(2025, 1, 20),
+                ),
+            ],
+        ),
+        lpr=_FakeLpr(),
+    )
+    prop_lines = [ln for ln in out.lines if ln.fee_category == "物业费滞纳金"]
+    assert len(prop_lines) == 2, f"expected 2, got {len(prop_lines)}"
+
+    assert prop_lines[0].period_start == date(2025, 1, 21)
+    assert prop_lines[0].period_end == date(2025, 2, 19)
+    assert "0.031" in prop_lines[0].rate_standard
+
+    assert prop_lines[1].period_start == date(2025, 2, 20)
+    assert prop_lines[1].period_end == date(2025, 4, 1)
+    assert "0.030" in prop_lines[1].rate_standard
 
 
 # ── 导入 quantize_money 供测试用 ──────────────────────────────────
