@@ -1,9 +1,12 @@
 """
 房屋租赁（PRD §2）：租金滞纳金 + 额外费用滞纳金 + 占用费 + 欠租本金。
 
-- 滞纳金按 LPR 发布日生成候选区间，合并相邻同 LPR 数值区间后输出。
-- 占用费按自然月拆分：月租金 / 当月自然日天数 × 当月占用天数 × 2。
-- 欠租本金按自然月拆分。
+- 租金滞纳金：按时间轴累计欠租基数计算，以本金基数变化日（各月违约开始日）
+  和 LPR 数值变化日切段；相邻同 LPR 且同基数合并。
+- 额外费用滞纳金：按单项费用计算，以 LPR 数值变化日切段，相邻同 LPR 合并；
+  不同费用项目之间不合并。
+- 占用费：按自然月拆分：月租金 / 当月自然日天数 × 当月占用天数 × 2。
+- 欠租本金：按自然月拆分。
 """
 
 from __future__ import annotations
@@ -292,11 +295,13 @@ def _rent_late_fee_lines(
         raw = seg.active_base * seg.lpr * Decimal(seg.day_count) / Decimal("365")
         amt = quantize_money(raw)
         total += amt
+        months_count = int(seg.active_base / req.monthly_rent)
         lines.append(
             ReportLineItem(
                 fee_category=_FEE_CAT_RENT,
                 stage_description=(
                     f"累计逾期租金 {seg.active_base}｜"
+                    f"截至本段起始日已逾期 {months_count} 期月租｜"
                     f"LPR={seg.lpr}"
                 ),
                 principal_base=quantize_money(seg.active_base),
